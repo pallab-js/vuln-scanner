@@ -176,6 +176,69 @@ public struct ScanConfig: Codable, Sendable {
     }
 }
 
+// MARK: - Network Error
+public enum NetworkError: Error, Sendable, LocalizedError {
+    case connectionTimeout(String)
+    case connectionRefused(String)
+    case dnsResolutionFailed(String)
+    case noRouteToHost(String)
+    case networkUnreachable
+    case permissionDenied
+    case scanCancelled
+    case invalidIP(String)
+    case invalidPort(Int)
+    case unknown(String)
+
+    public var errorDescription: String? {
+        switch self {
+        case .connectionTimeout(let target): return "Connection timed out: \(target)"
+        case .connectionRefused(let target): return "Connection refused: \(target)"
+        case .dnsResolutionFailed(let host): return "DNS resolution failed: \(host)"
+        case .noRouteToHost(let target): return "No route to host: \(target)"
+        case .networkUnreachable: return "Network is unreachable"
+        case .permissionDenied: return "Permission denied"
+        case .scanCancelled: return "Scan was cancelled"
+        case .invalidIP(let ip): return "Invalid IP address: \(ip)"
+        case .invalidPort(let p): return "Invalid port number: \(p)"
+        case .unknown(let msg): return "Unknown error: \(msg)"
+        }
+    }
+
+    public static func from(_ error: Error) -> NetworkError {
+        let desc = error.localizedDescription.lowercased()
+        switch error {
+        case is CancellationError:
+            return .scanCancelled
+        case let posixError as POSIXErrorCode:
+            switch posixError {
+            case .ECONNREFUSED: return .connectionRefused(desc)
+            case .ETIMEDOUT: return .connectionTimeout(desc)
+            case .EHOSTUNREACH: return .noRouteToHost(desc)
+            case .ENETUNREACH: return .networkUnreachable
+            case .EACCES, .EPERM: return .permissionDenied
+            default: return .unknown(desc)
+            }
+        default:
+            if desc.contains("timed out") || desc.contains("timeout") {
+                return .connectionTimeout(desc)
+            }
+            if desc.contains("refused") || desc.contains("reset") {
+                return .connectionRefused(desc)
+            }
+            if desc.contains("unreachable") {
+                return .networkUnreachable
+            }
+            if desc.contains("permission") || desc.contains("denied") {
+                return .permissionDenied
+            }
+            if desc.contains("cancelled") {
+                return .scanCancelled
+            }
+            return .unknown(desc)
+        }
+    }
+}
+
 // MARK: - Scan Result
 public struct ScanResult: Codable, Sendable {
     public let devices: [Device]

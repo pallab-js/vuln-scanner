@@ -3,20 +3,6 @@ import NIOCore
 import NIOPosix
 import Core
 
-public enum PortScanError: Error, Sendable, LocalizedError {
-    case connectionFailed(String)
-    case invalidPort(Int)
-    case scannerCancelled
-
-    public var errorDescription: String? {
-        switch self {
-        case .connectionFailed(let msg): return "Connection failed: \(msg)"
-        case .invalidPort(let p): return "Invalid port: \(p)"
-        case .scannerCancelled: return "Scanner cancelled"
-        }
-    }
-}
-
 public struct PortScanner: Sendable {
     private let logger = Logger(category: .scanning)
     private let eventLoopGroup: EventLoopGroup
@@ -66,8 +52,39 @@ public struct PortScanner: Sendable {
         ip: String,
         port: Int,
         timeout: TimeInterval,
-        eventLoopGroup: EventLoopGroup
+        eventLoopGroup: EventLoopGroup,
+        retries: Int = 2
     ) async -> ScanPort {
+        let maxRetries = min(max(retries, 0), 3)
+
+        for attempt in 0...maxRetries {
+            if attempt > 0 {
+                let delay = Double(attempt) * 0.1
+                try? await Task.sleep(for: .seconds(delay))
+            }
+
+            let result = await attemptConnect(ip: ip, port: port, timeout: timeout, eventLoopGroup: eventLoopGroup)
+
+            switch result {
+            case .success(let scanPort):
+                return scanPort
+            case .failure:
+                if attempt == maxRetries {
+                    Logger.scanning.debug("Port \(port)/\(ip) closed after \(maxRetries + 1) attempts")
+                    return ScanPort(number: port, state: .closed, transport: .tcp)
+                }
+            }
+        }
+
+        return ScanPort(number: port, state: .closed, transport: .tcp)
+    }
+
+    private static func attemptConnect(
+        ip: String,
+        port: Int,
+        timeout: TimeInterval,
+        eventLoopGroup: EventLoopGroup
+    ) async -> Result<ScanPort, Error> {
         let timeoutAmount = TimeAmount.nanoseconds(Int64(timeout * 1_000_000_000))
 
         let bootstrap = ClientBootstrap(group: eventLoopGroup)
@@ -82,15 +99,15 @@ public struct PortScanner: Sendable {
 
             try? await channel.close().get()
 
-            return ScanPort(
+            return .success(ScanPort(
                 number: port,
                 state: .open,
                 transport: .tcp,
                 service: service,
                 banner: banner
-            )
+            ))
         } catch {
-            return ScanPort(number: port, state: .closed, transport: .tcp)
+            return .failure(NetworkError.from(error))
         }
     }
 }

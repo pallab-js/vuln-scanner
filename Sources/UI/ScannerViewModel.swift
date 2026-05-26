@@ -85,9 +85,10 @@ public final class ScannerViewModel {
                 self.statusMessage = "Scan cancelled"
                 Logger.ui.notice("Scan cancelled by user")
             } catch {
-                self.errorMessage = error.localizedDescription
+                let networkError = NetworkError.from(error)
+                self.errorMessage = networkError.errorDescription
                 self.statusMessage = "Scan failed"
-                Logger.ui.error("Scan failed: \(error.localizedDescription)")
+                Logger.ui.error("Scan failed: \(networkError.localizedDescription)")
             }
 
             self.isScanning = false
