@@ -450,6 +450,8 @@ public struct ContentView: View {
                 .help("Scan Settings (⌘,)")
 
                 Menu {
+                    Button(action: exportHTML) { Label("Export HTML Report", systemImage: "doc.text") }
+                    Divider()
                     Button(action: exportCSV) { Label("Export as CSV", systemImage: "tablecells") }
                     Button(action: exportJSON) { Label("Export as JSON", systemImage: "curlybraces") }
                 } label: {
@@ -467,6 +469,19 @@ public struct ContentView: View {
                     .frame(width: 8, height: 8)
                 Text(viewModel.statusMessage)
                     .font(.caption)
+            }
+        }
+    }
+
+    private func exportHTML() {
+        let html = viewModel.exportHTML()
+        let panel = NSSavePanel()
+        panel.allowedContentTypes = [.html]
+        panel.nameFieldStringValue = "scan-report.html"
+        panel.begin { response in
+            if response == .OK, let url = panel.url {
+                try? html.write(to: url, atomically: true, encoding: .utf8)
+                Logger.ui.info("HTML report exported to \(url.path)")
             }
         }
     }

@@ -229,6 +229,12 @@ public final class ScannerViewModel {
         loadHistory()
     }
 
+    public func exportHTML() -> String {
+        let sourceDevices = selectedHistoryScanID != nil ? historyDevices : devices
+        let generator = ReportGenerator()
+        return generator.generateHTML(devices: sourceDevices, scanDuration: scanDuration, timestamp: Date(), config: config)
+    }
+
     public func exportCSV() -> String {
         let sourceDevices = selectedHistoryScanID != nil ? historyDevices : devices
         var csv = "IP,MAC,Hostname,OS,Risk Score,Open Ports,Vulnerabilities\n"
