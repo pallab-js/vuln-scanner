@@ -30,9 +30,7 @@ let package = Package(
         .package(url: "https://github.com/apple/swift-nio.git", from: "2.65.0")
     ],
     targets: [
-        .target(
-            name: "Core"
-        ),
+        .target(name: "Core"),
         .target(
             name: "NetScan",
             dependencies: [
@@ -44,28 +42,28 @@ let package = Package(
         ),
         .target(
             name: "Engine",
-            dependencies: [
-                "Core",
-                "NetScan"
-            ],
+            dependencies: ["Core", "NetScan"],
             resources: [.process("Resources")]
         ),
         .target(
-            name: "UI",
-            dependencies: [
-                "Core",
-                "NetScan",
-                "Engine"
-            ]
-        ),
-        .executableTarget(
-            name: "App",
+            name: "API",
             dependencies: [
                 "Core",
                 "NetScan",
                 "Engine",
-                "UI"
+                .product(name: "NIO", package: "swift-nio"),
+                .product(name: "NIOCore", package: "swift-nio"),
+                .product(name: "NIOPosix", package: "swift-nio"),
+                .product(name: "NIOHTTP1", package: "swift-nio"),
             ]
+        ),
+        .target(
+            name: "UI",
+            dependencies: ["Core", "NetScan", "Engine", "API"]
+        ),
+        .executableTarget(
+            name: "App",
+            dependencies: ["Core", "NetScan", "Engine", "UI", "API"]
         ),
         .testTarget(
             name: "CoreTests",

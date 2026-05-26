@@ -205,4 +205,37 @@ public struct ReportGenerator: Sendable {
         }
         return rows.isEmpty ? "<p style='color: #666;'>No compliance mappings in detected vulnerabilities.</p>" : rows
     }
+
+    // MARK: - Machine-readable exports
+    public func generateJSON(devices: [Device]) -> String {
+        let data: [[String: Any]] = devices.sorted { $0.riskScore > $1.riskScore }.map { d in
+            [
+                "ip": d.ip, "mac": d.mac ?? "", "host": d.host ?? "", "os": d.os ?? "",
+                "risk_score": d.riskScore,
+                "ports": d.ports.filter { $0.state == .open }.map { p -> [String: Any] in
+                    ["port": p.number, "service": p.service ?? "", "banner": p.banner ?? ""]
+                },
+                "vulnerabilities": d.vulnerabilities.map { v -> [String: Any] in
+                    ["id": v.id, "severity": v.severity, "description": v.description,
+                     "recommendation": v.recommendation ?? "", "compliance": v.complianceIDs]
+                }
+            ]
+        }
+        if let json = try? JSONSerialization.data(withJSONObject: data, options: [.prettyPrinted, .withoutEscapingSlashes]) {
+            return String(data: json, encoding: .utf8) ?? "[]"
+        }
+        return "[]"
+    }
+
+    public func generateCSV(devices: [Device]) -> String {
+        var csv = "IP,MAC,Hostname,OS,Risk Score,Open Ports,Vulnerabilities\n"
+        for device in devices.sorted(by: { $0.riskScore > $1.riskScore }) {
+            let ports = device.ports.filter { $0.state == .open }
+                .map { "\($0.number)/\($0.service ?? "")" }.joined(separator: ";")
+            let vulns = device.vulnerabilities.map { "\($0.id)(\(String(format: "%.1f", $0.severity)))" }.joined(separator: ";")
+            csv += "\(device.ip),\(device.mac ?? ""),\(device.host ?? ""),\(device.os ?? ""),"
+            csv += "\(String(format: "%.1f", device.riskScore)),\"\(ports)\",\"\(vulns)\"\n"
+        }
+        return csv
+    }
 }

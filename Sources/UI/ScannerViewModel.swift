@@ -3,6 +3,7 @@ import Observation
 import Core
 import NetScan
 import Engine
+import API
 
 @MainActor
 @Observable
@@ -56,6 +57,10 @@ public final class ScannerViewModel {
         if config.scheduleEnabled {
             ScanScheduler.shared.schedule(intervalHours: config.scheduleIntervalHours)
         }
+        if config.apiEnabled {
+            RESTServer.shared.port = config.apiPort
+            try? RESTServer.shared.start()
+        }
     }
 
     public func checkScheduledScan() {
@@ -63,6 +68,26 @@ public final class ScannerViewModel {
             ScanScheduler.shared.schedule(intervalHours: config.scheduleIntervalHours)
             statusMessage = "Scheduled scans active (every \(config.scheduleIntervalHours)h)"
         }
+    }
+
+    public func updateAPI(enabled: Bool, port: Int) {
+        config.apiEnabled = enabled
+        config.apiPort = port
+        if enabled {
+            RESTServer.shared.port = port
+            do {
+                try RESTServer.shared.start()
+                statusMessage = "REST API running on port \(port)"
+            } catch {
+                errorMessage = "Failed to start API: \(error.localizedDescription)"
+                statusMessage = "API failed to start"
+                Logger.ui.error("API start failed: \(error.localizedDescription)")
+            }
+        } else {
+            RESTServer.shared.stop()
+            statusMessage = "REST API stopped"
+        }
+        saveConfig()
     }
 
     public func updateSchedule(enabled: Bool, intervalHours: Double) {

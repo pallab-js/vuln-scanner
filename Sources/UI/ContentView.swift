@@ -1,6 +1,7 @@
 import SwiftUI
 import Charts
 import Core
+import API
 
 public struct ContentView: View {
     @State private var viewModel = ScannerViewModel()
@@ -777,6 +778,8 @@ private struct ConfigSheet: View {
     @State private var subnetCIDR: String
     @State private var scheduleEnabled: Bool
     @State private var scheduleIntervalHours: Double
+    @State private var apiEnabled: Bool
+    @State private var apiPort: String
 
     init(config: Binding<ScanConfig>, viewModel: ScannerViewModel) {
         _config = config
@@ -796,6 +799,8 @@ private struct ConfigSheet: View {
         _subnetCIDR = State(initialValue: config.wrappedValue.subnetCIDR ?? "")
         _scheduleEnabled = State(initialValue: config.wrappedValue.scheduleEnabled)
         _scheduleIntervalHours = State(initialValue: config.wrappedValue.scheduleIntervalHours)
+        _apiEnabled = State(initialValue: config.wrappedValue.apiEnabled)
+        _apiPort = State(initialValue: String(config.wrappedValue.apiPort))
     }
 
     var body: some View {
@@ -811,8 +816,11 @@ private struct ConfigSheet: View {
 
             scheduleTab
                 .tabItem { Label("Schedule", systemImage: "clock.arrow.circlepath") }
+
+            apiTab
+                .tabItem { Label("API", systemImage: "globe") }
         }
-        .frame(width: 460, height: 460)
+        .frame(width: 460, height: 520)
         .padding()
     }
 
@@ -980,6 +988,41 @@ private struct ConfigSheet: View {
         .formStyle(.grouped)
     }
 
+    // MARK: - API Tab
+    private var apiTab: some View {
+        Form {
+            Section("REST API") {
+                Toggle("Enable REST API", isOn: $apiEnabled)
+
+                if apiEnabled {
+                    HStack {
+                        Text("Port:").frame(width: 50, alignment: .trailing)
+                        TextField("8080", text: $apiPort)
+                            .frame(width: 80)
+                    }
+
+                    let status = RESTServer.shared.isRunning
+                    HStack(spacing: 8) {
+                        Circle().fill(status ? Color.green : Color.gray).frame(width: 8, height: 8)
+                        Text(status ? "Running on port \(apiPort)" : "Stopped")
+                            .font(.caption)
+                    }
+
+                    Text("Endpoints: /api/v1/devices, /api/v1/scans, /api/v1/health, /api/v1/export/csv, POST /api/v1/scans")
+                        .font(.caption).foregroundStyle(.secondary)
+                }
+            }
+
+            HStack {
+                Button("Reset Defaults") { applyDefaults() }
+                Spacer()
+                Button("Done") { saveAndDismiss() }
+                    .buttonStyle(.borderedProminent)
+            }
+        }
+        .formStyle(.grouped)
+    }
+
     private var nextScanText: String {
         guard scheduleEnabled, let next = ScanScheduler.shared.nextScanAt else { return "—" }
         let formatter = RelativeDateTimeFormatter()
@@ -996,6 +1039,7 @@ private struct ConfigSheet: View {
         scanUDP = d.scanUDP; webhookURL = d.webhookURL; webhookEnabled = d.webhookEnabled
         subnetCIDR = d.subnetCIDR ?? ""
         scheduleEnabled = d.scheduleEnabled; scheduleIntervalHours = d.scheduleIntervalHours
+        apiEnabled = d.apiEnabled; apiPort = String(d.apiPort)
     }
 
     private func saveAndDismiss() {
@@ -1013,6 +1057,7 @@ private struct ConfigSheet: View {
         config.scheduleEnabled = scheduleEnabled
         config.scheduleIntervalHours = scheduleIntervalHours
         viewModel.updateSchedule(enabled: scheduleEnabled, intervalHours: scheduleIntervalHours)
+        viewModel.updateAPI(enabled: apiEnabled, port: Int(apiPort) ?? 8080)
         dismiss()
     }
 }
