@@ -75,9 +75,12 @@ public struct ContentView: View {
                 .padding(.vertical, 4)
             }
 
+            tagFilterBar
+
             List(selection: $viewModel.selectedDevice) {
-                ForEach(sourceDevices) { device in
-                    DeviceRow(device: device)
+                let displayDevices = viewModel.tagFilter != nil ? viewModel.filteredDevicesWithTags : sourceDevices
+                ForEach(displayDevices) { device in
+                    DeviceRow(device: device, tags: viewModel.deviceTags[device.ip] ?? [])
                         .tag(device)
                         .transition(.slide)
                 }
@@ -86,6 +89,46 @@ public struct ContentView: View {
             .frame(minWidth: 250)
             .animation(.easeInOut(duration: 0.3), value: sourceDevices)
         }
+    }
+
+    @ViewBuilder
+    private var tagFilterBar: some View {
+        let tags = viewModel.allKnownTags
+        if !tags.isEmpty {
+            VStack(alignment: .leading, spacing: 4) {
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 4) {
+                        Button("All") {
+                            viewModel.tagFilter = nil
+                        }
+                        .font(.caption2)
+                        .buttonStyle(.plain)
+                        .foregroundStyle(viewModel.tagFilter == nil ? Color.accentColor : .secondary)
+                        .bold(viewModel.tagFilter == nil)
+
+                        ForEach(tags) { tag in
+                            Button(tag.name) {
+                                viewModel.tagFilter = viewModel.tagFilter == tag.name ? nil : tag.name
+                            }
+                            .font(.caption2)
+                            .buttonStyle(.plain)
+                            .foregroundStyle(viewModel.tagFilter == tag.name ? tagColor(tag.color) : .secondary)
+                            .bold(viewModel.tagFilter == tag.name)
+                        }
+                    }
+                    .padding(.horizontal, 8)
+                }
+            }
+            .padding(.vertical, 4)
+        }
+    }
+
+    private func tagColor(_ hex: String) -> Color {
+        guard hex.hasPrefix("#"), let val = Int(hex.dropFirst(), radix: 16) else { return .gray }
+        let r = Double((val >> 16) & 0xFF) / 255
+        let g = Double((val >> 8) & 0xFF) / 255
+        let b = Double(val & 0xFF) / 255
+        return Color(.sRGB, red: r, green: g, blue: b, opacity: 1)
     }
 
     private var searchBar: some View {
@@ -397,6 +440,7 @@ public struct ContentView: View {
                     StatCard(title: "Vulnerabilities", value: "\(device.vulnerabilities.count)", icon: "exclamationmark.triangle", color: .red, compact: true)
                     StatCard(title: "Risk Score", value: String(format: "%.1f", device.riskScore), icon: "gauge.medium", color: riskColor(device.riskScore), compact: true)
                 }
+                tagSection(device: device)
                 portSection(device: device)
                 vulnSection(device: device)
             }
@@ -425,6 +469,55 @@ public struct ContentView: View {
             }
             .font(.caption)
             .foregroundStyle(.secondary)
+        }
+    }
+
+    private func tagSection(device: Device) -> some View {
+        let deviceTags = viewModel.deviceTags[device.ip, default: []]
+        return VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                Text("Tags").font(.headline)
+                Spacer()
+                Button {
+                    viewModel.editingTagDevice = device.ip
+                    viewModel.showTagEditor = true
+                } label: {
+                    Image(systemName: "plus.circle").font(.caption)
+                }
+                .buttonStyle(.plain)
+                .help("Add tag")
+            }
+
+            if deviceTags.isEmpty {
+                Text("No tags").foregroundStyle(.secondary).font(.subheadline)
+            } else {
+                HStack(spacing: 6) {
+                    ForEach(deviceTags) { tag in
+                        HStack(spacing: 2) {
+                            Text(tag.name).font(.caption2).bold()
+                            Button {
+                                viewModel.removeTag(tag, from: device.ip)
+                            } label: {
+                                Image(systemName: "xmark").font(.system(size: 6))
+                            }
+                            .buttonStyle(.plain)
+                            .foregroundStyle(.white.opacity(0.7))
+                        }
+                        .padding(.horizontal, 6).padding(.vertical, 3)
+                        .background(tagColor(tag.color))
+                        .foregroundStyle(.white)
+                        .clipShape(.capsule)
+                    }
+                }
+            }
+        }
+        .padding()
+        .background(Color(nsColor: .windowBackgroundColor))
+        .clipShape(.rect(cornerRadius: 10))
+        .sheet(isPresented: $viewModel.showTagEditor) {
+            if let ip = viewModel.editingTagDevice {
+                TagEditorView(viewModel: viewModel, deviceIP: ip)
+            }
         }
     }
 
@@ -635,6 +728,7 @@ public struct ContentView: View {
 // MARK: - Supporting Views
 private struct DeviceRow: View {
     let device: Device
+    let tags: [Tag]
 
     var body: some View {
         HStack(spacing: 8) {
@@ -642,6 +736,20 @@ private struct DeviceRow: View {
             VStack(alignment: .leading, spacing: 2) {
                 Text(device.host ?? device.ip).font(.body).lineLimit(1)
                 Text(device.ip).font(.caption).foregroundStyle(.secondary)
+                if !tags.isEmpty {
+                    HStack(spacing: 3) {
+                        ForEach(tags.prefix(3)) { tag in
+                            Text(tag.name).font(.system(size: 7)).bold()
+                                .padding(.horizontal, 4).padding(.vertical, 1)
+                                .background(tagColor(tag.color).opacity(0.2))
+                                .foregroundStyle(tagColor(tag.color))
+                                .clipShape(.rect(cornerRadius: 3))
+                        }
+                        if tags.count > 3 {
+                            Text("+\(tags.count - 3)").font(.system(size: 7)).foregroundStyle(.secondary)
+                        }
+                    }
+                }
             }
             Spacer()
             HStack(spacing: 4) {
@@ -668,6 +776,14 @@ private struct DeviceRow: View {
 
     private func riskColor(_ score: Double) -> Color {
         switch score { case 7...: .red case 4...: .orange case 1...: .yellow default: .green }
+    }
+
+    private func tagColor(_ hex: String) -> Color {
+        guard hex.hasPrefix("#"), let val = Int(hex.dropFirst(), radix: 16) else { return .gray }
+        let r = Double((val >> 16) & 0xFF) / 255
+        let g = Double((val >> 8) & 0xFF) / 255
+        let b = Double(val & 0xFF) / 255
+        return Color(.sRGB, red: r, green: g, blue: b, opacity: 1)
     }
 }
 

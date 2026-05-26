@@ -27,6 +27,10 @@ public final class ScannerViewModel {
     public var showRuleEditor = false
     public var editingRule: CustomRule?
     public var showRulesManager = false
+    public var deviceTags: [String: [Tag]] = [:]
+    public var tagFilter: String?
+    public var showTagEditor = false
+    public var editingTagDevice: String? = nil
 
     public var complianceSummary: String {
         guard !activeComplianceFilters.isEmpty else { return "All" }
@@ -50,6 +54,7 @@ public final class ScannerViewModel {
     public init() {
         Logger.ui.notice("ScannerViewModel initialized")
         customRules = CustomRulesStore.shared.load()
+        deviceTags = TagStore.shared.load()
         loadHistory()
         ScanScheduler.shared.configure { [weak self] in
             await self?.startScan()
@@ -238,6 +243,28 @@ public final class ScannerViewModel {
 
             self.isScanning = false
             self.progress = 1.0
+        }
+    }
+
+    public func addTag(_ name: String, color: String, to ip: String) {
+        let tag = Tag(name: name, color: color)
+        TagStore.shared.addTag(tag, to: ip)
+        deviceTags = TagStore.shared.load()
+    }
+
+    public func removeTag(_ tag: Tag, from ip: String) {
+        TagStore.shared.removeTag(tag, from: ip)
+        deviceTags = TagStore.shared.load()
+    }
+
+    public var allKnownTags: [Tag] {
+        TagStore.shared.allTags()
+    }
+
+    public var filteredDevicesWithTags: [Device] {
+        guard let tagFilter else { return filteredDevices }
+        return filteredDevices.filter { device in
+            deviceTags[device.ip]?.contains(where: { $0.name == tagFilter }) ?? false
         }
     }
 
