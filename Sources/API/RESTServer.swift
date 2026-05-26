@@ -173,7 +173,7 @@ public final class RESTServer: @unchecked Sendable {
                 scanned.append(device)
             }
             let result = ScanResult(devices: scanned, scanDuration: 0, totalPortsScanned: 1024)
-            try? store.save(scanResult: result, config: .default, duration: 0)
+            _ = try? store.save(scanResult: result, config: .default, duration: 0)
         } catch {
             logger.error("API scan failed: \(error.localizedDescription)")
         }
@@ -231,7 +231,7 @@ public final class RESTServer: @unchecked Sendable {
 }
 
 // MARK: - NIO Channel Handler
-private final class HTTPHandler: ChannelInboundHandler {
+private final class HTTPHandler: ChannelInboundHandler, @unchecked Sendable {
     typealias InboundIn = HTTPServerRequestPart
     typealias OutboundOut = HTTPServerResponsePart
     private let server: RESTServer

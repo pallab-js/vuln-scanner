@@ -250,7 +250,7 @@ public final class ScannerViewModel {
 
                 self.scanDuration = Date().timeIntervalSince(startTime)
                 let result = ScanResult(devices: scannedDevices, scanDuration: self.scanDuration, totalPortsScanned: self.config.portRange.count)
-                try? self.scanStore.save(scanResult: result, config: self.config, duration: self.scanDuration)
+                _ = try? self.scanStore.save(scanResult: result, config: self.config, duration: self.scanDuration)
                 self.loadHistory()
 
                 self.statusMessage = "Scan complete: \(scannedDevices.count) devices in \(String(format: "%.1f", self.scanDuration))s"

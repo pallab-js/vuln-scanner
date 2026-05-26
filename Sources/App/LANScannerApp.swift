@@ -50,7 +50,7 @@ enum CLIRunner {
         let args = Array(CommandLine.arguments.dropFirst())
         var cidr: String?
         var outputPath: String?
-        var isScheduled = args.contains("--scheduled-scan")
+        let isScheduled = args.contains("--scheduled-scan")
 
         var i = args.startIndex
         while i < args.endIndex {
@@ -110,7 +110,7 @@ enum CLIRunner {
             let totalVulns = scannedDevices.reduce(0) { $0 + $1.vulnerabilities.count }
             let avgRisk = scannedDevices.isEmpty ? 0 : scannedDevices.reduce(0.0) { $0 + $1.riskScore } / Double(scannedDevices.count)
             let result = ScanResult(devices: scannedDevices, scanDuration: duration, totalPortsScanned: config.portRange.count)
-            try? store.save(scanResult: result, config: config, duration: duration)
+            _ = try? store.save(scanResult: result, config: config, duration: duration)
 
             let report = ReportGenerator().generateHTML(devices: scannedDevices, scanDuration: duration, timestamp: result.timestamp, config: config)
 
