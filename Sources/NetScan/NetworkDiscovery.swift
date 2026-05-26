@@ -45,11 +45,17 @@ public struct NetworkDiscovery: Sendable {
         self.gate = ConcurrencyGate(maxConcurrency: min(maxConcurrency, 64))
     }
 
-    public func scanSubnet(timeout: TimeInterval = 10.0) async throws -> [Device] {
+    public func scanSubnet(timeout: TimeInterval = 10.0, cidrOverride: String? = nil) async throws -> [Device] {
         logger.notice("Starting LAN discovery (timeout: \(timeout)s)")
 
-        let subnet = try await resolveLocalSubnet()
-        logger.info("Scanning subnet: \(subnet.network)/\(subnet.prefix)")
+        let subnet: Subnet
+        if let cidr = cidrOverride, let parsed = Subnet(cidr: cidr) {
+            subnet = parsed
+            logger.info("Using custom subnet: \(cidr)")
+        } else {
+            subnet = try await resolveLocalSubnet()
+            logger.info("Scanning subnet: \(subnet.network)/\(subnet.prefix)")
+        }
 
         let hosts = try await resolveActiveHosts(on: subnet, timeout: timeout)
 
@@ -155,6 +161,29 @@ public struct Subnet: Sendable {
     public var usableHostCount: Int {
         let count = Int(broadcastUInt32 - networkUInt32 - 1)
         return max(0, count)
+    }
+}
+
+public extension Subnet {
+    init?(cidr: String) {
+        let parts = cidr.split(separator: "/")
+        guard parts.count == 2,
+              let ipStr = parts.first.map(String.init),
+              let prefix = Int(parts[1]),
+              prefix >= 0, prefix <= 32 else { return nil }
+
+        guard let ipAddr = ipv4ToUInt32(ipStr) else { return nil }
+        let maskAddr: UInt32 = prefix == 0 ? 0 : ~UInt32(0) << UInt32(32 - prefix)
+        let networkAddr = ipAddr & maskAddr
+        let broadcastAddr = networkAddr | ~maskAddr
+
+        self.network = uint32ToIPv4(networkAddr)
+        self.broadcast = uint32ToIPv4(broadcastAddr)
+        self.netmask = uint32ToIPv4(maskAddr)
+        self.prefix = prefix
+        self.networkUInt32 = networkAddr
+        self.broadcastUInt32 = broadcastAddr
+        self.maskUInt32 = maskAddr
     }
 }
 

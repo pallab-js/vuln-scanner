@@ -110,7 +110,7 @@ public final class ScannerViewModel {
 
             do {
                 self.statusMessage = "Discovering network hosts..."
-                let discoveredDevices = try await self.discovery.scanSubnet(timeout: 30)
+                let discoveredDevices = try await self.discovery.scanSubnet(timeout: 30, cidrOverride: self.config.subnetCIDR)
                 self.progress = 0.2
 
                 var scannedDevices: [Device] = []
