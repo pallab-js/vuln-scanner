@@ -1,0 +1,66 @@
+// swift-tools-version: 6.0
+import PackageDescription
+
+let package = Package(
+    name: "LANScanner",
+    platforms: [
+        .macOS(.v14)
+    ],
+    products: [
+        .executable(name: "LANScanner", targets: ["App"])
+    ],
+    dependencies: [
+        .package(url: "https://github.com/apple/swift-nio.git", from: "2.65.0")
+    ],
+    targets: [
+        .target(
+            name: "Core"
+        ),
+        .target(
+            name: "NetScan",
+            dependencies: [
+                "Core",
+                .product(name: "NIO", package: "swift-nio"),
+                .product(name: "NIOCore", package: "swift-nio"),
+                .product(name: "NIOPosix", package: "swift-nio"),
+            ]
+        ),
+        .target(
+            name: "Engine",
+            dependencies: [
+                "Core",
+                "NetScan"
+            ],
+            resources: [.process("Resources")]
+        ),
+        .target(
+            name: "UI",
+            dependencies: [
+                "Core",
+                "NetScan",
+                "Engine"
+            ]
+        ),
+        .executableTarget(
+            name: "App",
+            dependencies: [
+                "Core",
+                "NetScan",
+                "Engine",
+                "UI"
+            ]
+        ),
+        .testTarget(
+            name: "CoreTests",
+            dependencies: ["Core"]
+        ),
+        .testTarget(
+            name: "NetScanTests",
+            dependencies: ["NetScan", "Core"]
+        ),
+        .testTarget(
+            name: "EngineTests",
+            dependencies: ["Engine", "NetScan", "Core"]
+        ),
+    ]
+)

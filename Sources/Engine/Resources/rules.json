@@ -1,0 +1,145 @@
+{
+  "version": 1,
+  "weakProtocols": [
+    {
+      "id": "VULN-TELNET-001",
+      "service": "telnet",
+      "severity": 8.5,
+      "description": "Telnet protocol transmits credentials in cleartext",
+      "recommendation": "Replace with SSH"
+    },
+    {
+      "id": "VULN-FTP-001",
+      "service": "ftp",
+      "severity": 7.0,
+      "description": "FTP transmits credentials in cleartext",
+      "recommendation": "Replace with SFTP or FTPS"
+    },
+    {
+      "id": "VULN-HTTP-001",
+      "service": "http",
+      "severity": 5.0,
+      "description": "Plain HTTP without TLS",
+      "recommendation": "Enable HTTPS with valid certificate"
+    }
+  ],
+  "outdatedVersions": [
+    {
+      "id": "VULN-SSH-001",
+      "service": "ssh",
+      "pattern": "OpenSSH_[0-6]\\.|OpenSSH_7\\.[0-3]",
+      "severity": 7.5,
+      "description": "Outdated OpenSSH version with known vulnerabilities",
+      "recommendation": "Upgrade to OpenSSH 8.0+"
+    },
+    {
+      "id": "VULN-APACHE-001",
+      "service": "http",
+      "pattern": "Apache/1\\.|Apache/2\\.[0-3]",
+      "severity": 7.0,
+      "description": "Outdated Apache HTTP Server",
+      "recommendation": "Upgrade to Apache 2.4+"
+    },
+    {
+      "id": "VULN-NGINX-001",
+      "service": "http",
+      "pattern": "nginx/1\\.[0-9]\\.",
+      "severity": 6.0,
+      "description": "Outdated nginx version",
+      "recommendation": "Upgrade to latest nginx stable"
+    },
+    {
+      "id": "VULN-SMB-001",
+      "service": "smb",
+      "pattern": "Samba [0-3]\\.|Samba 4\\.[0-9]\\.",
+      "severity": 8.0,
+      "description": "Outdated Samba version with known vulnerabilities",
+      "recommendation": "Upgrade to Samba 4.10+"
+    }
+  ],
+  "weakCiphers": [
+    {
+      "id": "VULN-SSL-001",
+      "service": "ssl",
+      "pattern": "SSLv3|TLSv1\\.0",
+      "severity": 7.5,
+      "description": "Obsolete SSL/TLS protocol version",
+      "recommendation": "Disable SSLv3 and TLS 1.0, enable TLS 1.2+"
+    },
+    {
+      "id": "VULN-CIPHER-001",
+      "service": "ssl",
+      "pattern": "RC4|DES|3DES|MD5",
+      "severity": 6.5,
+      "description": "Weak cipher suite detected",
+      "recommendation": "Disable weak ciphers, use AES-GCM"
+    }
+  ],
+  "eolSystems": [
+    {
+      "id": "VULN-OS-001",
+      "pattern": "Windows XP|Windows 2000|Windows 7",
+      "severity": 9.0,
+      "description": "End-of-life operating system",
+      "recommendation": "Upgrade to supported Windows version"
+    },
+    {
+      "id": "VULN-OS-002",
+      "pattern": "OS X 10\\.[0-9]|Mac OS X 10\\.[0-9]",
+      "severity": 8.0,
+      "description": "Outdated macOS version",
+      "recommendation": "Upgrade to latest macOS"
+    }
+  ],
+  "dangerousPorts": [
+    {
+      "id": "VULN-PORT-001",
+      "port": 21,
+      "severity": 5.0,
+      "description": "FTP port exposed",
+      "recommendation": "Close if not needed, or use SFTP"
+    },
+    {
+      "id": "VULN-PORT-002",
+      "port": 23,
+      "severity": 7.0,
+      "description": "Telnet port exposed",
+      "recommendation": "Close and use SSH instead"
+    },
+    {
+      "id": "VULN-PORT-003",
+      "port": 25,
+      "severity": 4.0,
+      "description": "SMTP port exposed - potential spam relay",
+      "recommendation": "Restrict access or close if not needed"
+    },
+    {
+      "id": "VULN-PORT-004",
+      "port": 135,
+      "severity": 6.0,
+      "description": "MSRPC port exposed",
+      "recommendation": "Block at firewall"
+    },
+    {
+      "id": "VULN-PORT-005",
+      "port": 139,
+      "severity": 6.0,
+      "description": "NetBIOS port exposed",
+      "recommendation": "Block at firewall"
+    },
+    {
+      "id": "VULN-PORT-006",
+      "port": 445,
+      "severity": 7.0,
+      "description": "SMB port exposed - potential for EternalBlue style attacks",
+      "recommendation": "Block at firewall if not needed"
+    },
+    {
+      "id": "VULN-PORT-007",
+      "port": 3389,
+      "severity": 5.0,
+      "description": "RDP port exposed",
+      "recommendation": "Use VPN or restrict access"
+    }
+  ]
+}
