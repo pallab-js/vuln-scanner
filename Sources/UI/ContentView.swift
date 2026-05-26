@@ -4,6 +4,7 @@ import Core
 
 public struct ContentView: View {
     @State private var viewModel = ScannerViewModel()
+    @State private var showTopology = false
 
     public init() {}
 
@@ -21,6 +22,9 @@ public struct ContentView: View {
         .frame(minWidth: 900, minHeight: 600)
         .sheet(isPresented: $viewModel.showConfig) {
             ConfigSheet(config: $viewModel.config, viewModel: viewModel)
+        }
+        .sheet(isPresented: $showTopology) {
+            topologySheet
         }
         .keyboardShortcutHandling(viewModel: viewModel)
     }
@@ -492,6 +496,12 @@ public struct ContentView: View {
                     .help("Start Scan (⌘R)")
                 }
 
+                Button(action: { showTopology = true }) {
+                    Label("Topology Map", systemImage: "point.3.connected.trianglepath.dotted")
+                }
+                .help("Network Topology Map")
+                .disabled(viewModel.devices.isEmpty && viewModel.selectedHistoryScanID == nil)
+
                 Button(action: { viewModel.showConfig = true }) {
                     Label("Configure", systemImage: "gearshape")
                 }
@@ -572,6 +582,41 @@ public struct ContentView: View {
             .padding(.vertical, 2)
             .background(riskColor(score))
             .clipShape(.capsule)
+    }
+
+    // MARK: - Topology Sheet
+    private var topologySheet: some View {
+        VStack(spacing: 0) {
+            HStack {
+                Text("Network Topology").font(.headline)
+                Spacer()
+                Button("Close") { showTopology = false }
+                    .buttonStyle(.borderedProminent)
+                    .controlSize(.small)
+            }
+            .padding()
+
+            let sourceDevices = viewModel.selectedHistoryScanID != nil ? viewModel.historyDevices : viewModel.devices
+
+            if sourceDevices.count < 2 {
+                VStack(spacing: 12) {
+                    Image(systemName: "point.3.connected.trianglepath.dotted")
+                        .font(.system(size: 40)).foregroundStyle(.tertiary)
+                    Text("Need at least 2 devices to render topology")
+                        .foregroundStyle(.secondary)
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else {
+                TopologyView(devices: sourceDevices) { deviceID in
+                    if let device = sourceDevices.first(where: { $0.id == deviceID }) {
+                        viewModel.selectedDevice = device
+                        showTopology = false
+                    }
+                }
+                .padding()
+            }
+        }
+        .frame(width: 500, height: 520)
     }
 }
 
