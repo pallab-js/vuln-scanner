@@ -257,6 +257,8 @@ public struct ScanConfig: Codable, Sendable {
     public var scheduleIntervalHours: Double
     public var apiEnabled: Bool
     public var apiPort: Int
+    public var autoUpdateRules: Bool
+    public var rulesURL: String
 
     public static let `default` = ScanConfig(
         portRange: 1...1024,
@@ -273,7 +275,9 @@ public struct ScanConfig: Codable, Sendable {
         scheduleEnabled: false,
         scheduleIntervalHours: 24,
         apiEnabled: false,
-        apiPort: 8080
+        apiPort: 8080,
+        autoUpdateRules: false,
+        rulesURL: ""
     )
 
     public init(portRange: ClosedRange<Int>, timeout: TimeInterval, maxConcurrency: Int,
@@ -281,7 +285,8 @@ public struct ScanConfig: Codable, Sendable {
                 scanUDP: Bool = false, udpPortRange: ClosedRange<Int> = 1...1024,
                 subnetCIDR: String? = nil, webhookEnabled: Bool = false, webhookURL: String = "",
                 scheduleEnabled: Bool = false, scheduleIntervalHours: Double = 24,
-                apiEnabled: Bool = false, apiPort: Int = 8080) {
+                apiEnabled: Bool = false, apiPort: Int = 8080,
+                autoUpdateRules: Bool = false, rulesURL: String = "") {
         self.portRange = portRange
         self.timeout = timeout
         self.maxConcurrency = min(maxConcurrency, 64)
@@ -297,6 +302,8 @@ public struct ScanConfig: Codable, Sendable {
         self.scheduleIntervalHours = max(1, min(scheduleIntervalHours, 168))
         self.apiEnabled = apiEnabled
         self.apiPort = max(1024, min(apiPort, 65535))
+        self.autoUpdateRules = autoUpdateRules
+        self.rulesURL = rulesURL
     }
 }
 

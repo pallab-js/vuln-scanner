@@ -23,6 +23,10 @@ public struct VulnRules: Codable, Sendable {
 
 public enum RuleLoader {
     public static func load() -> VulnRules {
+        if let cached = RuleUpdater.loadCached() {
+            Logger.mapping.info("Using cached rules v\(cached.version) (\(cached.allRules.count) signatures)")
+            return cached
+        }
         guard let url = Bundle.module.url(forResource: "rules", withExtension: "json") else {
             Logger.mapping.error("Failed to find rules.json in bundle")
             return emptyRules()
@@ -31,12 +35,20 @@ public enum RuleLoader {
             let data = try Data(contentsOf: url)
             let decoder = JSONDecoder()
             let rules = try decoder.decode(VulnRules.self, from: data)
-            Logger.mapping.info("Loaded \(rules.allRules.count) vuln rules (v\(rules.version))")
+            Logger.mapping.info("Loaded \(rules.allRules.count) bundled vuln rules (v\(rules.version))")
             return rules
         } catch {
             Logger.mapping.error("Failed to load rules.json: \(error.localizedDescription)")
             return emptyRules()
         }
+    }
+
+    public static var isUsingCached: Bool {
+        RuleUpdater.loadCached() != nil
+    }
+
+    public static var currentVersion: Int {
+        (RuleUpdater.loadCached() ?? load()).version
     }
 
     private static func emptyRules() -> VulnRules {

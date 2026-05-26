@@ -2,6 +2,7 @@ import SwiftUI
 import Charts
 import Core
 import API
+import Engine
 
 public struct ContentView: View {
     @State private var viewModel = ScannerViewModel()
@@ -23,6 +24,14 @@ public struct ContentView: View {
         .frame(minWidth: 900, minHeight: 600)
         .sheet(isPresented: $viewModel.showConfig) {
             ConfigSheet(config: $viewModel.config, viewModel: viewModel)
+        }
+        .alert("Rules Update", isPresented: .init(
+            get: { viewModel.rulesUpdateError != nil },
+            set: { if !$0 { viewModel.rulesUpdateError = nil } }
+        )) {
+            Button("OK") { viewModel.rulesUpdateError = nil }
+        } message: {
+            Text(viewModel.rulesUpdateError ?? "")
         }
         .sheet(isPresented: $showTopology) {
             topologySheet
@@ -607,6 +616,14 @@ public struct ContentView: View {
                 }
                 .help("Manage Custom Rules")
 
+                if !viewModel.config.rulesURL.isEmpty {
+                    Button(action: { viewModel.updateRules() }) {
+                        Label("Update Rules", systemImage: "arrow.down.circle")
+                    }
+                    .disabled(viewModel.isUpdatingRules)
+                    .help("Fetch latest rules")
+                }
+
                 Button(action: { viewModel.showConfig = true }) {
                     Label("Configure", systemImage: "gearshape")
                 }
@@ -632,6 +649,18 @@ public struct ContentView: View {
                     .frame(width: 8, height: 8)
                 Text(viewModel.statusMessage)
                     .font(.caption)
+
+                if viewModel.rulesVersion > 0 {
+                    let stale = RuleUpdater.isCacheStale()
+                    HStack(spacing: 3) {
+                        Circle().fill(stale ? Color.orange : Color.green).frame(width: 5, height: 5)
+                        Text("Rules v\(viewModel.rulesVersion)").font(.caption2).foregroundStyle(.secondary)
+                    }
+                }
+
+                if viewModel.isUpdatingRules {
+                    ProgressView().progressViewStyle(.circular).controlSize(.small).scaleEffect(0.6)
+                }
             }
         }
     }
@@ -896,6 +925,8 @@ private struct ConfigSheet: View {
     @State private var scheduleIntervalHours: Double
     @State private var apiEnabled: Bool
     @State private var apiPort: String
+    @State private var autoUpdateRules: Bool
+    @State private var rulesURL: String
 
     init(config: Binding<ScanConfig>, viewModel: ScannerViewModel) {
         _config = config
@@ -917,6 +948,8 @@ private struct ConfigSheet: View {
         _scheduleIntervalHours = State(initialValue: config.wrappedValue.scheduleIntervalHours)
         _apiEnabled = State(initialValue: config.wrappedValue.apiEnabled)
         _apiPort = State(initialValue: String(config.wrappedValue.apiPort))
+        _autoUpdateRules = State(initialValue: config.wrappedValue.autoUpdateRules)
+        _rulesURL = State(initialValue: config.wrappedValue.rulesURL)
     }
 
     var body: some View {
@@ -969,6 +1002,23 @@ private struct ConfigSheet: View {
 
             Section("Exclusions") {
                 TextField("Exclude IPs (comma-separated)", text: $excludeText)
+            }
+
+            Section("Rules Auto-Update") {
+                Toggle("Auto-update rules on scan", isOn: $autoUpdateRules)
+
+                TextField("Rules JSON URL", text: $rulesURL)
+                    .font(.caption)
+                    .textFieldStyle(.roundedBorder)
+
+                if !rulesURL.isEmpty {
+                    let version = RuleUpdater.cachedVersion.map { "v\($0)" } ?? "bundled"
+                    let lastUpdate = RuleUpdater.lastUpdateDate.map { "Last: \($0.formatted(date: .abbreviated, time: .shortened))" } ?? "Not cached"
+                    HStack(spacing: 8) {
+                        Circle().fill(RuleUpdater.isCacheStale() ? Color.orange : Color.green).frame(width: 6, height: 6)
+                        Text("\(version) — \(lastUpdate)").font(.caption).foregroundStyle(.secondary)
+                    }
+                }
             }
 
             HStack {
@@ -1156,6 +1206,7 @@ private struct ConfigSheet: View {
         subnetCIDR = d.subnetCIDR ?? ""
         scheduleEnabled = d.scheduleEnabled; scheduleIntervalHours = d.scheduleIntervalHours
         apiEnabled = d.apiEnabled; apiPort = String(d.apiPort)
+        autoUpdateRules = d.autoUpdateRules; rulesURL = d.rulesURL
     }
 
     private func saveAndDismiss() {
@@ -1174,6 +1225,8 @@ private struct ConfigSheet: View {
         config.scheduleIntervalHours = scheduleIntervalHours
         viewModel.updateSchedule(enabled: scheduleEnabled, intervalHours: scheduleIntervalHours)
         viewModel.updateAPI(enabled: apiEnabled, port: Int(apiPort) ?? 8080)
+        config.autoUpdateRules = autoUpdateRules
+        config.rulesURL = rulesURL
         dismiss()
     }
 }

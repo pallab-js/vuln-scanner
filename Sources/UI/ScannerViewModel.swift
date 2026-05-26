@@ -31,6 +31,10 @@ public final class ScannerViewModel {
     public var tagFilter: String?
     public var showTagEditor = false
     public var editingTagDevice: String? = nil
+    public var rulesVersion: Int = 0
+    public var isUpdatingRules = false
+    public var rulesUpdateError: String?
+    public var showRulesUpdateConfig = false
 
     public var complianceSummary: String {
         guard !activeComplianceFilters.isEmpty else { return "All" }
@@ -55,6 +59,7 @@ public final class ScannerViewModel {
         Logger.ui.notice("ScannerViewModel initialized")
         customRules = CustomRulesStore.shared.load()
         deviceTags = TagStore.shared.load()
+        rulesVersion = RuleLoader.currentVersion
         loadHistory()
         ScanScheduler.shared.configure { [weak self] in
             await self?.startScan()
@@ -140,6 +145,30 @@ public final class ScannerViewModel {
         devices.reduce(0) { $0 + $1.vulnerabilities.count }
     }
 
+    public func updateRules() {
+        guard !isUpdatingRules else { return }
+        let urlString = config.rulesURL
+        guard !urlString.isEmpty else {
+            rulesUpdateError = "No rules URL configured"
+            return
+        }
+        isUpdatingRules = true
+        rulesUpdateError = nil
+        statusMessage = "Updating rules..."
+        Task {
+            do {
+                _ = try await RuleUpdater.update(from: urlString)
+                rulesVersion = RuleLoader.currentVersion
+                statusMessage = "Rules updated to v\(rulesVersion)"
+            } catch {
+                rulesUpdateError = error.localizedDescription
+                statusMessage = "Rules update failed"
+                Logger.ui.error("Rules update failed: \(error.localizedDescription)")
+            }
+            isUpdatingRules = false
+        }
+    }
+
     public func startScan() {
         guard !isScanning else { return }
         isScanning = true
@@ -152,6 +181,16 @@ public final class ScannerViewModel {
 
         scanTask = Task { [weak self] in
             guard let self = self else { return }
+            if self.config.autoUpdateRules && !self.config.rulesURL.isEmpty {
+                self.statusMessage = "Updating vulnerability rules..."
+                do {
+                    _ = try await RuleUpdater.update(from: self.config.rulesURL)
+                    self.rulesVersion = RuleLoader.currentVersion
+                    Logger.ui.notice("Rules auto-updated to v\(self.rulesVersion)")
+                } catch {
+                    Logger.ui.notice("Rules auto-update failed: \(error.localizedDescription)")
+                }
+            }
             let startTime = Date()
 
             do {
