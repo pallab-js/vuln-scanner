@@ -108,7 +108,8 @@ public struct ContentView: View {
                 } else {
                     let sourceDevices = viewModel.selectedHistoryScanID != nil ? viewModel.historyDevices : viewModel.devices
                     summaryCards(devices: sourceDevices)
-                    severityChart(devices: sourceDevices)
+                    complianceFilterBar
+                    severityChart(devices: sourceDevices, compliance: viewModel.activeComplianceFilters)
                     recentDevices(devices: sourceDevices)
                 }
 
@@ -168,12 +169,59 @@ public struct ContentView: View {
         }
     }
 
-    private func severityChart(devices: [Device]) -> some View {
+    private var complianceFilterBar: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Compliance Filter").font(.caption).foregroundStyle(.secondary)
+            HStack(spacing: 8) {
+                ForEach(ComplianceFramework.allCases, id: \.self) { framework in
+                    let isActive = viewModel.activeComplianceFilters.contains(framework)
+                    Button {
+                        if isActive {
+                            viewModel.activeComplianceFilters.remove(framework)
+                        } else {
+                            viewModel.activeComplianceFilters.insert(framework)
+                        }
+                    } label: {
+                        HStack(spacing: 4) {
+                            if isActive {
+                                Image(systemName: "checkmark.circle.fill").font(.caption2)
+                            }
+                            Text(framework.rawValue).font(.caption2).bold()
+                        }
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 4)
+                        .background(isActive ? Color.accentColor : Color(nsColor: .controlBackgroundColor))
+                        .foregroundStyle(isActive ? .white : .primary)
+                        .clipShape(.capsule)
+                        .overlay(
+                            Capsule().stroke(isActive ? Color.accentColor : Color.gray.opacity(0.3), lineWidth: 1)
+                        )
+                    }
+                    .buttonStyle(.plain)
+                }
+                if !viewModel.activeComplianceFilters.isEmpty {
+                    Button("Clear") { viewModel.activeComplianceFilters.removeAll() }
+                        .font(.caption2).foregroundStyle(.secondary)
+                        .buttonStyle(.plain)
+                }
+            }
+            if !viewModel.activeComplianceFilters.isEmpty {
+                Text("Showing vulns relevant to \(viewModel.complianceSummary)")
+                    .font(.caption2).foregroundStyle(.secondary)
+            }
+        }
+        .padding()
+        .background(Color(nsColor: .windowBackgroundColor))
+        .clipShape(.rect(cornerRadius: 10))
+    }
+
+    private func severityChart(devices: [Device], compliance: Set<ComplianceFramework> = []) -> some View {
         VStack(alignment: .leading, spacing: 12) {
             Text("Vulnerability Severity Distribution")
                 .font(.headline)
 
-            let vulns = devices.flatMap(\.vulnerabilities)
+            let allVulns = devices.flatMap(\.vulnerabilities)
+            let vulns = compliance.isEmpty ? allVulns : allVulns.filter { !Set($0.compliance).isDisjoint(with: compliance) }
             if vulns.isEmpty {
                 Text("No vulnerabilities across scanned devices")
                     .foregroundStyle(.secondary).font(.subheadline)
@@ -581,6 +629,19 @@ private struct VulnRow: View {
                     }
                 }
                 Text(vuln.description).font(.body)
+
+                if !vuln.compliance.isEmpty {
+                    HStack(spacing: 4) {
+                        ForEach(vuln.compliance, id: \.self) { fw in
+                            Text(fw.rawValue).font(.system(size: 7)).bold()
+                                .padding(.horizontal, 4).padding(.vertical, 1)
+                                .background(frameworkColor(fw).opacity(0.15))
+                                .foregroundStyle(frameworkColor(fw))
+                                .clipShape(.rect(cornerRadius: 3))
+                        }
+                    }
+                }
+
                 if let rec = vuln.recommendation {
                     Label(rec, systemImage: "lightbulb").font(.caption).foregroundStyle(.blue)
                 }
@@ -589,6 +650,16 @@ private struct VulnRow: View {
         .padding(10)
         .background(Color(nsColor: .windowBackgroundColor))
         .clipShape(.rect(cornerRadius: 8))
+    }
+
+    private func frameworkColor(_ fw: ComplianceFramework) -> Color {
+        switch fw {
+        case .pciDSS: return .red
+        case .hipaa: return .blue
+        case .gdpr: return .purple
+        case .soc2: return .green
+        case .nist: return .orange
+        }
     }
 
     private func severityBadge(score: Double) -> some View {

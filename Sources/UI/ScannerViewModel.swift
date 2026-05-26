@@ -21,6 +21,17 @@ public final class ScannerViewModel {
     public var trends = TrendData(totalScans: 0, vulnsOverTime: [], devicesOverTime: [], riskOverTime: [], topCVE: [])
     public var selectedHistoryScanID: String?
     public var historyDevices: [Device] = []
+    public var activeComplianceFilters: Set<ComplianceFramework> = []
+
+    public var complianceSummary: String {
+        guard !activeComplianceFilters.isEmpty else { return "All" }
+        return activeComplianceFilters.map(\.rawValue).sorted().joined(separator: ", ")
+    }
+
+    public func vulnsMatchingCompliance(_ vulns: [Vuln]) -> [Vuln] {
+        guard !activeComplianceFilters.isEmpty else { return vulns }
+        return vulns.filter { !Set($0.compliance).isDisjoint(with: activeComplianceFilters) }
+    }
 
     private let discovery = NetworkDiscovery()
     private let portScanner = PortScanner()

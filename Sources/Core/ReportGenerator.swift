@@ -84,6 +84,9 @@ public struct ReportGenerator: Sendable {
         <h2>Vulnerability Details</h2>
         \(vulnRows.isEmpty ? "<p style='color: #666;'>No vulnerabilities detected.</p>" : vulnRows)
 
+        <h2>Compliance Mapping</h2>
+        \(complianceSection(devices: devices))
+
         <h2>Recommendations</h2>
         \(recommendations(devices: devices))
 
@@ -140,6 +143,7 @@ public struct ReportGenerator: Sendable {
         default: color = "#9e9e9e"
         }
         let cveStr = vuln.cve.map { " <span style='background: #e3f2fd; padding: 1px 6px; border-radius: 3px; font-size: 8pt;'>\($0)</span>" } ?? ""
+        let compStr = vuln.compliance.isEmpty ? "" : vuln.compliance.map { "<span style='display:inline-block;font-size:7pt;font-weight:600;padding:1px 5px;border-radius:3px;margin-right:3px;background:\(frameworkCSS($0));color:#fff;'>\($0.rawValue)</span>" }.joined()
         let recStr = vuln.recommendation.map { "<div class=\"rec\">💡 \($0)</div>" } ?? ""
         return """
         <div style="padding: 8px 0; border-bottom: 1px solid #eee;">
@@ -147,10 +151,21 @@ public struct ReportGenerator: Sendable {
                 <span style="background: \(color); color: #fff; padding: 2px 8px; border-radius: 10px; font-size: 8pt; font-weight: 600;">\(String(format: "%.1f", vuln.severity))</span>
                 <span style="font-weight: 600; font-size: 10pt;">\(vuln.id)</span>\(cveStr)
             </div>
+            <div style="margin: 4px 0;">\(compStr)</div>
             <p style="margin: 4px 0; font-size: 9pt; color: #333;">\(vuln.description)</p>
             \(recStr)
         </div>
         """
+    }
+
+    private func frameworkCSS(_ fw: ComplianceFramework) -> String {
+        switch fw {
+        case .pciDSS: return "#d32f2f"
+        case .hipaa: return "#1976d2"
+        case .gdpr: return "#7b1fa2"
+        case .soc2: return "#388e3c"
+        case .nist: return "#f57c00"
+        }
     }
 
     private func recommendations(devices: [Device]) -> String {
@@ -171,5 +186,23 @@ public struct ReportGenerator: Sendable {
             items.append("No critical recommendations. Maintain regular scan cadence and keep systems updated.")
         }
         return items.map { "<div class=\"rec\">\($0)</div>" }.joined()
+    }
+
+    private func complianceSection(devices: [Device]) -> String {
+        let frameworks = ComplianceFramework.allCases
+        var rows = ""
+        for fw in frameworks {
+            let related = devices.flatMap(\.vulnerabilities).filter { $0.compliance.contains(fw) }
+            let unique = Set(related.map(\.id)).sorted()
+            guard !unique.isEmpty else { continue }
+            let color = frameworkCSS(fw)
+            rows += """
+            <div style="margin: 8px 0; padding: 8px 12px; border-left: 3px solid \(color);">
+                <strong style="color: \(color);">\(fw.rawValue)</strong> — \(related.count) findings across \(unique.count) rule types
+                <div style="font-size: 8pt; color: #666; margin-top: 4px;">\(unique.joined(separator: ", "))</div>
+            </div>
+            """
+        }
+        return rows.isEmpty ? "<p style='color: #666;'>No compliance mappings in detected vulnerabilities.</p>" : rows
     }
 }

@@ -35,32 +35,24 @@ public struct VulnMapper: Sendable {
         return vulns.uniqued().sorted()
     }
 
+    private func makeVuln(from rule: VulnRule) -> Vuln {
+        let compliance: [ComplianceFramework] = (rule.compliance ?? []).compactMap { ComplianceFramework(rawValue: $0) }
+        return Vuln(id: rule.id, severity: rule.severity, description: rule.description,
+                    recommendation: rule.recommendation, compliance: compliance)
+    }
+
     private func evaluatePort(_ port: ScanPort) -> [Vuln] {
         guard port.state == .open else { return [] }
-
         var vulns: [Vuln] = []
 
         for rule in rules.dangerousPorts where rule.port == port.number {
-            vulns.append(Vuln(
-                id: rule.id,
-                severity: rule.severity,
-                description: rule.description,
-                recommendation: rule.recommendation
-            ))
+            vulns.append(makeVuln(from: rule))
         }
-
         for rule in rules.weakProtocols {
-            if let service = rule.service,
-               port.service?.lowercased() == service.lowercased() {
-                vulns.append(Vuln(
-                    id: rule.id,
-                    severity: rule.severity,
-                    description: rule.description,
-                    recommendation: rule.recommendation
-                ))
+            if let service = rule.service, port.service?.lowercased() == service.lowercased() {
+                vulns.append(makeVuln(from: rule))
             }
         }
-
         return vulns
     }
 
@@ -68,14 +60,8 @@ public struct VulnMapper: Sendable {
         var vulns: [Vuln] = []
 
         for rule in rules.weakProtocols {
-            if let service = rule.service,
-               name.lowercased() == service.lowercased() {
-                vulns.append(Vuln(
-                    id: rule.id,
-                    severity: rule.severity,
-                    description: rule.description,
-                    recommendation: rule.recommendation
-                ))
+            if let service = rule.service, name.lowercased() == service.lowercased() {
+                vulns.append(makeVuln(from: rule))
             }
         }
 
@@ -85,14 +71,7 @@ public struct VulnMapper: Sendable {
                 if let pattern = rule.pattern {
                     do {
                         let regex = try Regex(pattern)
-                        if banner.contains(regex) {
-                            vulns.append(Vuln(
-                                id: rule.id,
-                                severity: rule.severity,
-                                description: rule.description,
-                                recommendation: rule.recommendation
-                            ))
-                        }
+                        if banner.contains(regex) { vulns.append(makeVuln(from: rule)) }
                     } catch {
                         logger.error("Invalid regex pattern: \(pattern) - \(error.localizedDescription)")
                     }
@@ -104,14 +83,7 @@ public struct VulnMapper: Sendable {
                     if let pattern = rule.pattern {
                         do {
                             let regex = try Regex(pattern)
-                            if banner.contains(regex) {
-                                vulns.append(Vuln(
-                                    id: rule.id,
-                                    severity: rule.severity,
-                                    description: rule.description,
-                                    recommendation: rule.recommendation
-                                ))
-                            }
+                            if banner.contains(regex) { vulns.append(makeVuln(from: rule)) }
                         } catch {
                             logger.error("Invalid regex pattern: \(pattern)")
                         }
@@ -119,7 +91,6 @@ public struct VulnMapper: Sendable {
                 }
             }
         }
-
         return vulns
     }
 
@@ -130,20 +101,12 @@ public struct VulnMapper: Sendable {
             if let pattern = rule.pattern {
                 do {
                     let regex = try Regex(pattern)
-                    if os.contains(regex) {
-                        vulns.append(Vuln(
-                            id: rule.id,
-                            severity: rule.severity,
-                            description: rule.description,
-                            recommendation: rule.recommendation
-                        ))
-                    }
+                    if os.contains(regex) { vulns.append(makeVuln(from: rule)) }
                 } catch {
                     logger.error("Invalid OS pattern: \(pattern)")
                 }
             }
         }
-
         return vulns
     }
 }

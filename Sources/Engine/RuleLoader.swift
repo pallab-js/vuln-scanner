@@ -9,6 +9,7 @@ public struct VulnRule: Codable, Sendable {
     public let service: String?
     public let pattern: String?
     public let port: Int?
+    public let compliance: [String]?
 }
 
 public struct VulnRules: Codable, Sendable {

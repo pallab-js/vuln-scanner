@@ -105,19 +105,34 @@ public struct Vuln: Codable, Identifiable, Comparable, Sendable, Hashable {
     public let description: String
     public let recommendation: String?
     public let cve: String?
+    public let compliance: [ComplianceFramework]
 
     public init(id: String, severity: Double, description: String,
-                recommendation: String? = nil, cve: String? = nil) {
+                recommendation: String? = nil, cve: String? = nil,
+                compliance: [ComplianceFramework] = []) {
         self.id = id
         self.severity = severity
         self.description = description
         self.recommendation = recommendation
         self.cve = cve
+        self.compliance = compliance
     }
+
+    public var complianceIDs: [String] { compliance.map(\.rawValue) }
 
     public static func < (lhs: Vuln, rhs: Vuln) -> Bool {
         lhs.severity > rhs.severity
     }
+}
+
+public enum ComplianceFramework: String, Codable, CaseIterable, Sendable, Hashable {
+    case pciDSS = "PCI-DSS"
+    case hipaa = "HIPAA"
+    case gdpr = "GDPR"
+    case soc2 = "SOC2"
+    case nist = "NIST"
+
+    public var displayName: String { rawValue }
 }
 
 public enum SeverityLevel: String, CaseIterable, Codable, Sendable, Comparable {

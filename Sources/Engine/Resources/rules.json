@@ -1,26 +1,29 @@
 {
-  "version": 1,
+  "version": 2,
   "weakProtocols": [
     {
       "id": "VULN-TELNET-001",
       "service": "telnet",
       "severity": 8.5,
       "description": "Telnet protocol transmits credentials in cleartext",
-      "recommendation": "Replace with SSH"
+      "recommendation": "Replace with SSH",
+      "compliance": ["PCI-DSS", "HIPAA", "NIST"]
     },
     {
       "id": "VULN-FTP-001",
       "service": "ftp",
       "severity": 7.0,
       "description": "FTP transmits credentials in cleartext",
-      "recommendation": "Replace with SFTP or FTPS"
+      "recommendation": "Replace with SFTP or FTPS",
+      "compliance": ["PCI-DSS", "HIPAA", "SOC2"]
     },
     {
       "id": "VULN-HTTP-001",
       "service": "http",
       "severity": 5.0,
       "description": "Plain HTTP without TLS",
-      "recommendation": "Enable HTTPS with valid certificate"
+      "recommendation": "Enable HTTPS with valid certificate",
+      "compliance": ["PCI-DSS", "GDPR", "SOC2"]
     }
   ],
   "outdatedVersions": [
@@ -30,7 +33,8 @@
       "pattern": "OpenSSH_[0-6]\\.|OpenSSH_7\\.[0-3]",
       "severity": 7.5,
       "description": "Outdated OpenSSH version with known vulnerabilities",
-      "recommendation": "Upgrade to OpenSSH 8.0+"
+      "recommendation": "Upgrade to OpenSSH 8.0+",
+      "compliance": ["PCI-DSS", "NIST"]
     },
     {
       "id": "VULN-APACHE-001",
@@ -38,7 +42,8 @@
       "pattern": "Apache/1\\.|Apache/2\\.[0-3]",
       "severity": 7.0,
       "description": "Outdated Apache HTTP Server",
-      "recommendation": "Upgrade to Apache 2.4+"
+      "recommendation": "Upgrade to Apache 2.4+",
+      "compliance": ["PCI-DSS", "NIST"]
     },
     {
       "id": "VULN-NGINX-001",
@@ -46,7 +51,8 @@
       "pattern": "nginx/1\\.[0-9]\\.",
       "severity": 6.0,
       "description": "Outdated nginx version",
-      "recommendation": "Upgrade to latest nginx stable"
+      "recommendation": "Upgrade to latest nginx stable",
+      "compliance": ["PCI-DSS"]
     },
     {
       "id": "VULN-SMB-001",
@@ -54,7 +60,8 @@
       "pattern": "Samba [0-3]\\.|Samba 4\\.[0-9]\\.",
       "severity": 8.0,
       "description": "Outdated Samba version with known vulnerabilities",
-      "recommendation": "Upgrade to Samba 4.10+"
+      "recommendation": "Upgrade to Samba 4.10+",
+      "compliance": ["PCI-DSS", "NIST"]
     }
   ],
   "weakCiphers": [
@@ -64,7 +71,8 @@
       "pattern": "SSLv3|TLSv1\\.0",
       "severity": 7.5,
       "description": "Obsolete SSL/TLS protocol version",
-      "recommendation": "Disable SSLv3 and TLS 1.0, enable TLS 1.2+"
+      "recommendation": "Disable SSLv3 and TLS 1.0, enable TLS 1.2+",
+      "compliance": ["PCI-DSS", "HIPAA", "GDPR", "NIST"]
     },
     {
       "id": "VULN-CIPHER-001",
@@ -72,7 +80,8 @@
       "pattern": "RC4|DES|3DES|MD5",
       "severity": 6.5,
       "description": "Weak cipher suite detected",
-      "recommendation": "Disable weak ciphers, use AES-GCM"
+      "recommendation": "Disable weak ciphers, use AES-GCM",
+      "compliance": ["PCI-DSS", "HIPAA", "NIST"]
     }
   ],
   "eolSystems": [
@@ -81,14 +90,16 @@
       "pattern": "Windows XP|Windows 2000|Windows 7",
       "severity": 9.0,
       "description": "End-of-life operating system",
-      "recommendation": "Upgrade to supported Windows version"
+      "recommendation": "Upgrade to supported Windows version",
+      "compliance": ["PCI-DSS", "HIPAA", "GDPR", "SOC2", "NIST"]
     },
     {
       "id": "VULN-OS-002",
       "pattern": "OS X 10\\.[0-9]|Mac OS X 10\\.[0-9]",
       "severity": 8.0,
       "description": "Outdated macOS version",
-      "recommendation": "Upgrade to latest macOS"
+      "recommendation": "Upgrade to latest macOS",
+      "compliance": ["PCI-DSS", "NIST"]
     }
   ],
   "dangerousPorts": [
@@ -97,49 +108,56 @@
       "port": 21,
       "severity": 5.0,
       "description": "FTP port exposed",
-      "recommendation": "Close if not needed, or use SFTP"
+      "recommendation": "Close if not needed, or use SFTP",
+      "compliance": ["PCI-DSS", "HIPAA"]
     },
     {
       "id": "VULN-PORT-002",
       "port": 23,
       "severity": 7.0,
       "description": "Telnet port exposed",
-      "recommendation": "Close and use SSH instead"
+      "recommendation": "Close and use SSH instead",
+      "compliance": ["PCI-DSS", "HIPAA", "NIST"]
     },
     {
       "id": "VULN-PORT-003",
       "port": 25,
       "severity": 4.0,
       "description": "SMTP port exposed - potential spam relay",
-      "recommendation": "Restrict access or close if not needed"
+      "recommendation": "Restrict access or close if not needed",
+      "compliance": ["PCI-DSS"]
     },
     {
       "id": "VULN-PORT-004",
       "port": 135,
       "severity": 6.0,
       "description": "MSRPC port exposed",
-      "recommendation": "Block at firewall"
+      "recommendation": "Block at firewall",
+      "compliance": ["PCI-DSS", "NIST"]
     },
     {
       "id": "VULN-PORT-005",
       "port": 139,
       "severity": 6.0,
       "description": "NetBIOS port exposed",
-      "recommendation": "Block at firewall"
+      "recommendation": "Block at firewall",
+      "compliance": ["PCI-DSS", "NIST"]
     },
     {
       "id": "VULN-PORT-006",
       "port": 445,
       "severity": 7.0,
       "description": "SMB port exposed - potential for EternalBlue style attacks",
-      "recommendation": "Block at firewall if not needed"
+      "recommendation": "Block at firewall if not needed",
+      "compliance": ["PCI-DSS", "HIPAA", "NIST"]
     },
     {
       "id": "VULN-PORT-007",
       "port": 3389,
       "severity": 5.0,
       "description": "RDP port exposed",
-      "recommendation": "Use VPN or restrict access"
+      "recommendation": "Use VPN or restrict access",
+      "compliance": ["PCI-DSS", "HIPAA"]
     }
   ]
 }
