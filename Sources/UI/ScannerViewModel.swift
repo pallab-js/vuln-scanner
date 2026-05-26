@@ -33,6 +33,8 @@ public final class ScannerViewModel {
     public var editingTagDevice: String? = nil
     public var rulesVersion: Int = 0
     public var isUpdatingRules = false
+    public var peakMemoryMB: Double = 0
+    public var currentMemoryMB: Double = 0
     public var rulesUpdateError: String?
     public var showRulesUpdateConfig = false
 
@@ -246,6 +248,8 @@ public final class ScannerViewModel {
                     scannedDevices.append(device)
                     self.devices = scannedDevices
                     self.progress = 0.2 + (0.8 * Double(index + 1) / Double(max(total, 1)))
+                    self.currentMemoryMB = MemoryTracker.shared.currentRSSMB
+                    self.peakMemoryMB = max(self.peakMemoryMB, self.currentMemoryMB)
                 }
 
                 self.scanDuration = Date().timeIntervalSince(startTime)

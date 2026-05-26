@@ -160,6 +160,8 @@ public struct ContentView: View {
         .padding(6)
         .background(Color(nsColor: .controlBackgroundColor))
         .clipShape(.rect(cornerRadius: 6))
+        .accessibilityLabel("Search devices by IP or hostname")
+        .focusable()
     }
 
     // MARK: - Dashboard
@@ -186,6 +188,9 @@ public struct ContentView: View {
             }
             .padding(24)
         }
+        .animation(.smooth(duration: 0.3), value: viewModel.devices.count)
+        .animation(.smooth(duration: 0.3), value: viewModel.selectedHistoryScanID)
+        .animation(.easeInOut(duration: 0.25), value: viewModel.activeComplianceFilters)
     }
 
     private var emptyState: some View {
@@ -309,6 +314,7 @@ public struct ContentView: View {
                     "LOW": .blue, "INFO": .gray
                 ])
                 .frame(height: 180)
+                .accessibilityLabel("Vulnerability severity distribution chart showing counts of critical, high, medium, low, and info findings")
             }
         }
         .padding()
@@ -598,11 +604,13 @@ public struct ContentView: View {
                 if viewModel.isScanning {
                     ProgressView().progressViewStyle(.linear).frame(width: 100)
                     Button("Stop", action: { viewModel.stopScan() })
+                        .accessibilityLabel("Stop current scan")
                 } else {
                     Button(action: { viewModel.startScan() }) {
                         Label("Start Scan", systemImage: "play.fill")
                     }
                     .help("Start Scan (⌘R)")
+                    .accessibilityLabel("Start network scan")
                 }
 
                 Button(action: { showTopology = true }) {
@@ -610,11 +618,13 @@ public struct ContentView: View {
                 }
                 .help("Network Topology Map")
                 .disabled(viewModel.devices.isEmpty && viewModel.selectedHistoryScanID == nil)
+                .accessibilityLabel("Show network topology map")
 
                 Button(action: { viewModel.showRulesManager = true }) {
                     Label("Custom Rules", systemImage: "doc.badge.gearshape")
                 }
                 .help("Manage Custom Rules")
+                .accessibilityLabel("Manage custom vulnerability rules")
 
                 if !viewModel.config.rulesURL.isEmpty {
                     Button(action: { viewModel.updateRules() }) {
@@ -622,12 +632,14 @@ public struct ContentView: View {
                     }
                     .disabled(viewModel.isUpdatingRules)
                     .help("Fetch latest rules")
+                    .accessibilityLabel("Update vulnerability rules from remote")
                 }
 
                 Button(action: { viewModel.showConfig = true }) {
                     Label("Configure", systemImage: "gearshape")
                 }
                 .help("Scan Settings (⌘,)")
+                .accessibilityLabel("Open scan settings")
 
                 Menu {
                     Button(action: exportHTML) { Label("Export HTML Report", systemImage: "doc.text") }
@@ -639,6 +651,7 @@ public struct ContentView: View {
                 }
                 .disabled(viewModel.devices.isEmpty && viewModel.historyDevices.isEmpty)
                 .help("Export Results")
+                .accessibilityLabel("Export scan results")
             }
         }
 
@@ -656,6 +669,10 @@ public struct ContentView: View {
                         Circle().fill(stale ? Color.orange : Color.green).frame(width: 5, height: 5)
                         Text("Rules v\(viewModel.rulesVersion)").font(.caption2).foregroundStyle(.secondary)
                     }
+                }
+
+                if viewModel.peakMemoryMB > 0 {
+                    Text("\(String(format: "%.0f", viewModel.peakMemoryMB)) MB").font(.caption2).foregroundStyle(.tertiary)
                 }
 
                 if viewModel.isUpdatingRules {

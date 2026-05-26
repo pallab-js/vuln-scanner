@@ -308,7 +308,7 @@ public struct ScanConfig: Codable, Sendable {
 }
 
 // MARK: - Network Error
-public enum NetworkError: Error, Sendable, LocalizedError {
+public enum NetworkError: Error, Sendable, LocalizedError, Equatable {
     case connectionTimeout(String)
     case connectionRefused(String)
     case dnsResolutionFailed(String)
@@ -319,6 +319,24 @@ public enum NetworkError: Error, Sendable, LocalizedError {
     case invalidIP(String)
     case invalidPort(Int)
     case unknown(String)
+
+    public static func == (lhs: NetworkError, rhs: NetworkError) -> Bool {
+        switch (lhs, rhs) {
+        case (.connectionTimeout, .connectionTimeout),
+            (.connectionRefused, .connectionRefused),
+            (.dnsResolutionFailed, .dnsResolutionFailed),
+            (.noRouteToHost, .noRouteToHost),
+            (.networkUnreachable, .networkUnreachable),
+            (.permissionDenied, .permissionDenied),
+            (.scanCancelled, .scanCancelled),
+            (.invalidIP, .invalidIP),
+            (.invalidPort, .invalidPort),
+            (.unknown, .unknown):
+            return true
+        default:
+            return false
+        }
+    }
 
     public var errorDescription: String? {
         switch self {
