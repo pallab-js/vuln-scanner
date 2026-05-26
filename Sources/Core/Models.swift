@@ -25,6 +25,15 @@ public struct Device: Codable, Identifiable, Comparable, Sendable, Hashable {
         self.lastSeen = lastSeen
     }
 
+    public var riskScore: Double {
+        guard !ports.isEmpty || !vulnerabilities.isEmpty else { return 0 }
+        let vulnScore = vulnerabilities.reduce(0.0) { $0 + $1.severity }
+        let avgVuln = vulnerabilities.isEmpty ? 0 : vulnScore / Double(vulnerabilities.count)
+        let portWeight = min(Double(ports.filter { $0.state == .open }.count) * 0.5, 5)
+        let highVulnBonus = vulnerabilities.contains(where: { $0.severity >= 7 }) ? 1.0 : 0
+        return min(avgVuln + portWeight + highVulnBonus, 10)
+    }
+
     public static func < (lhs: Device, rhs: Device) -> Bool {
         lhs.ip < rhs.ip
     }
@@ -111,7 +120,7 @@ public struct Vuln: Codable, Identifiable, Comparable, Sendable, Hashable {
     }
 }
 
-public enum SeverityLevel: String, Codable, Sendable, Comparable {
+public enum SeverityLevel: String, CaseIterable, Codable, Sendable, Comparable {
     case critical = "CRITICAL"
     case high = "HIGH"
     case medium = "MEDIUM"
@@ -147,6 +156,75 @@ public enum SeverityLevel: String, Codable, Sendable, Comparable {
     }
 }
 
+// MARK: - Scan Summary (for history list)
+public struct ScanSummary: Codable, Identifiable, Sendable {
+    public var id: String { scanID }
+    public let scanID: String
+    public let timestamp: Date
+    public let duration: TimeInterval
+    public let deviceCount: Int
+    public let totalOpenPorts: Int
+    public let totalVulnerabilities: Int
+    public let riskScore: Double
+    public let config: ScanConfig
+
+    public init(scanID: String = UUID().uuidString, timestamp: Date = Date(), duration: TimeInterval,
+                deviceCount: Int, totalOpenPorts: Int, totalVulnerabilities: Int,
+                riskScore: Double, config: ScanConfig) {
+        self.scanID = scanID
+        self.timestamp = timestamp
+        self.duration = duration
+        self.deviceCount = deviceCount
+        self.totalOpenPorts = totalOpenPorts
+        self.totalVulnerabilities = totalVulnerabilities
+        self.riskScore = riskScore
+        self.config = config
+    }
+}
+
+// MARK: - Trend Data Point
+public struct TrendPoint: Codable, Identifiable, Sendable, Hashable {
+    public var id: String { "\(date.timeIntervalSince1970)-\(metric)" }
+    public let date: Date
+    public let metric: String
+    public let value: Double
+
+    public init(date: Date, metric: String, value: Double) {
+        self.date = date
+        self.metric = metric
+        self.value = value
+    }
+}
+
+// MARK: - Trend Data
+public struct TrendData: Codable, Sendable {
+    public let totalScans: Int
+    public let vulnsOverTime: [TrendPoint]
+    public let devicesOverTime: [TrendPoint]
+    public let riskOverTime: [TrendPoint]
+    public let topCVE: [CVECount]
+
+    public init(totalScans: Int, vulnsOverTime: [TrendPoint], devicesOverTime: [TrendPoint],
+                riskOverTime: [TrendPoint], topCVE: [CVECount]) {
+        self.totalScans = totalScans
+        self.vulnsOverTime = vulnsOverTime
+        self.devicesOverTime = devicesOverTime
+        self.riskOverTime = riskOverTime
+        self.topCVE = topCVE
+    }
+}
+
+public struct CVECount: Codable, Identifiable, Sendable, Hashable {
+    public var id: String { cve }
+    public let cve: String
+    public let count: Int
+
+    public init(cve: String, count: Int) {
+        self.cve = cve
+        self.count = count
+    }
+}
+
 // MARK: - Scan Configuration
 public struct ScanConfig: Codable, Sendable {
     public var portRange: ClosedRange<Int>
@@ -155,6 +233,11 @@ public struct ScanConfig: Codable, Sendable {
     public var excludeIPs: [String]
     public var serviceDetection: Bool
     public var osDetection: Bool
+    public var scanUDP: Bool
+    public var udpPortRange: ClosedRange<Int>
+    public var subnetCIDR: String?
+    public var webhookEnabled: Bool
+    public var webhookURL: String
 
     public static let `default` = ScanConfig(
         portRange: 1...1024,
@@ -162,17 +245,29 @@ public struct ScanConfig: Codable, Sendable {
         maxConcurrency: 32,
         excludeIPs: [],
         serviceDetection: true,
-        osDetection: true
+        osDetection: true,
+        scanUDP: false,
+        udpPortRange: 1...1024,
+        subnetCIDR: nil,
+        webhookEnabled: false,
+        webhookURL: ""
     )
 
     public init(portRange: ClosedRange<Int>, timeout: TimeInterval, maxConcurrency: Int,
-                excludeIPs: [String], serviceDetection: Bool, osDetection: Bool) {
+                excludeIPs: [String], serviceDetection: Bool, osDetection: Bool,
+                scanUDP: Bool = false, udpPortRange: ClosedRange<Int> = 1...1024,
+                subnetCIDR: String? = nil, webhookEnabled: Bool = false, webhookURL: String = "") {
         self.portRange = portRange
         self.timeout = timeout
         self.maxConcurrency = min(maxConcurrency, 64)
         self.excludeIPs = excludeIPs
         self.serviceDetection = serviceDetection
         self.osDetection = osDetection
+        self.scanUDP = scanUDP
+        self.udpPortRange = udpPortRange
+        self.subnetCIDR = subnetCIDR
+        self.webhookEnabled = webhookEnabled
+        self.webhookURL = webhookURL
     }
 }
 
@@ -209,8 +304,8 @@ public enum NetworkError: Error, Sendable, LocalizedError {
         switch error {
         case is CancellationError:
             return .scanCancelled
-        case let posixError as POSIXErrorCode:
-            switch posixError {
+        case let posixError as POSIXError:
+            switch posixError.code {
             case .ECONNREFUSED: return .connectionRefused(desc)
             case .ETIMEDOUT: return .connectionTimeout(desc)
             case .EHOSTUNREACH: return .noRouteToHost(desc)
