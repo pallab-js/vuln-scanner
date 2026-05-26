@@ -25,6 +25,7 @@ public final class ScannerViewModel {
     private let discovery = NetworkDiscovery()
     private let portScanner = PortScanner()
     private let vulnMapper = VulnMapper()
+    private let osFingerprinter = OSFingerprinter()
     private let udpScanner = UDPScanner()
     private let scanStore = ScanStore.shared
     private let alertService = AlertService()
@@ -136,11 +137,14 @@ public final class ScannerViewModel {
                         allPorts.append(contentsOf: udpPorts)
                     }
 
+                    let inferredOS = self.osFingerprinter.infer(ports: allPorts)
+                    let resolvedOS = device.os ?? inferredOS
+
                     device = Device(
                         ip: device.ip,
                         mac: device.mac,
                         host: device.host,
-                        os: device.os,
+                        os: resolvedOS,
                         ports: allPorts
                     )
 
@@ -149,7 +153,7 @@ public final class ScannerViewModel {
                         ip: device.ip,
                         mac: device.mac,
                         host: device.host,
-                        os: device.os,
+                        os: resolvedOS,
                         ports: allPorts,
                         vulnerabilities: vulns
                     )

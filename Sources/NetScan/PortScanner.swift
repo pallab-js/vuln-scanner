@@ -142,12 +142,40 @@ extension PortScanner {
 
     private static func detectService(port: Int, banner: String?) -> String? {
         if let banner = banner {
-            if banner.hasPrefix("SSH-") { return "ssh" }
-            if banner.contains("FTP") || (banner.contains("220") && banner.localizedCaseInsensitiveContains("ftp")) {
-                return "ftp"
+            if banner.hasPrefix("SSH-") {
+                let ver = extract(banner, pattern: "SSH-([\\d.]+)")
+                return ver.map { "ssh \($0)" } ?? "ssh"
             }
-            if banner.contains("HTTP/") || banner.contains("Server:") { return "http" }
-            if banner.contains("SMTP") || banner.hasPrefix("220 ") { return "smtp" }
+            let lower = banner.lowercased()
+            if lower.contains("220") && lower.contains("ftp") {
+                let ver = extract(banner, pattern: "FTP[^\\d]*([\\d.]+)")
+                return ver.map { "ftp \($0)" } ?? "ftp"
+            }
+            if lower.contains("http/") || lower.contains("server:") {
+                let server = extract(banner, pattern: "(?i)Server:\\s*([^\\r\\n]+)")
+                if let s = server { return "http (\(s.trimmingCharacters(in: .whitespaces)))" }
+                let ver = extract(banner, pattern: "HTTP/([\\d.]+)")
+                return ver.map { "http \($0)" } ?? "http"
+            }
+            if lower.contains("smtp") || banner.hasPrefix("220 ") {
+                let ver = extract(banner, pattern: "ESMTP[^\\d]*([\\w./]+)")
+                return ver.map { "smtp \($0)" } ?? "smtp"
+            }
+            if lower.contains("pop3") || banner.hasPrefix("+OK") {
+                let ver = extract(banner, pattern: "POP3[^\\d]*([\\d.]+)")
+                return ver.map { "pop3 \($0)" } ?? "pop3"
+            }
+            if lower.contains("imap") {
+                let ver = extract(banner, pattern: "IMAP[^\\d]*([\\d.]+)")
+                return ver.map { "imap \($0)" } ?? "imap"
+            }
+            if lower.contains("mysql") || lower.contains("mariadb") {
+                let ver = extract(banner, pattern: "([\\d.]+)")
+                return ver.map { "mysql \($0)" } ?? "mysql"
+            }
+            if lower.contains("rdp") || lower.contains("remote desktop") {
+                return "rdp"
+            }
         }
 
         let commonPorts: [Int: String] = [
@@ -159,6 +187,16 @@ extension PortScanner {
             8443: "https-alt", 27017: "mongodb"
         ]
         return commonPorts[port]
+    }
+
+    private static func extract(_ banner: String, pattern: String) -> String? {
+        let nsString = banner as NSString
+        guard let nsRegex = try? NSRegularExpression(pattern: pattern),
+              let match = nsRegex.firstMatch(in: banner, range: NSRange(location: 0, length: nsString.length)),
+              match.numberOfRanges > 1 else { return nil }
+        let range = match.range(at: 1)
+        guard range.location != NSNotFound else { return nil }
+        return nsString.substring(with: range)
     }
 }
 
