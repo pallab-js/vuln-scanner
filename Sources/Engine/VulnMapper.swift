@@ -10,7 +10,7 @@ public struct VulnMapper: Sendable {
         logger.info("VulnMapper initialized with \(rules.allRules.count) rules")
     }
 
-    public func map(device: Device) -> [Vuln] {
+    public func map(device: Device, customRules: [CustomRule] = []) -> [Vuln] {
         var vulns: [Vuln] = []
 
         for port in device.ports {
@@ -18,19 +18,22 @@ public struct VulnMapper: Sendable {
             if let serviceName = port.service {
                 vulns.append(contentsOf: evaluateService(name: serviceName, banner: port.banner))
             }
+            vulns.append(contentsOf: evaluateCustomRules(customRules, for: port))
         }
 
         if let os = device.os {
             vulns.append(contentsOf: evaluateOS(os))
+            vulns.append(contentsOf: evaluateCustomRulesForOS(customRules, os: os))
         }
 
         return vulns.uniqued().sorted()
     }
 
-    public func map(services: [Service]) -> [Vuln] {
+    public func map(services: [Service], customRules: [CustomRule] = []) -> [Vuln] {
         var vulns: [Vuln] = []
         for service in services {
             vulns.append(contentsOf: evaluateService(name: service.name, banner: service.banner))
+            vulns.append(contentsOf: evaluateCustomRulesForService(customRules, name: service.name, banner: service.banner))
         }
         return vulns.uniqued().sorted()
     }
@@ -108,6 +111,46 @@ public struct VulnMapper: Sendable {
             }
         }
         return vulns
+    }
+
+    // MARK: - Custom Rules Evaluation
+    private func evaluateCustomRules(_ rules: [CustomRule], for port: ScanPort) -> [Vuln] {
+        guard port.state == .open else { return [] }
+        return rules.compactMap { rule -> Vuln? in
+            guard rule.category == .dangerousPort, let rp = rule.port, rp == port.number else { return nil }
+            return vuln(from: rule)
+        }
+    }
+
+    private func evaluateCustomRulesForService(_ rules: [CustomRule], name: String, banner: String?) -> [Vuln] {
+        rules.compactMap { rule -> Vuln? in
+            switch rule.category {
+            case .weakProtocol:
+                guard let s = rule.service, name.lowercased() == s.lowercased() else { return nil }
+                return vuln(from: rule)
+            case .outdatedVersion, .weakCipher:
+                guard let s = rule.service, name.lowercased().contains(s.lowercased()),
+                      let pattern = rule.pattern else { return nil }
+                guard let regex = try? Regex(pattern), let b = banner, b.contains(regex) else { return nil }
+                return vuln(from: rule)
+            default:
+                return nil
+            }
+        }
+    }
+
+    private func evaluateCustomRulesForOS(_ rules: [CustomRule], os: String) -> [Vuln] {
+        rules.compactMap { rule -> Vuln? in
+            guard rule.category == .eolSystem, rule.matchOS, let pattern = rule.pattern else { return nil }
+            guard let regex = try? Regex(pattern), os.contains(regex) else { return nil }
+            return vuln(from: rule)
+        }
+    }
+
+    private func vuln(from rule: CustomRule) -> Vuln {
+        let compliance: [ComplianceFramework] = rule.compliance.compactMap { ComplianceFramework(rawValue: $0) }
+        return Vuln(id: rule.id, severity: rule.severity, description: rule.description,
+                    recommendation: rule.recommendation, compliance: compliance)
     }
 }
 

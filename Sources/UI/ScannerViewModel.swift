@@ -22,6 +22,10 @@ public final class ScannerViewModel {
     public var selectedHistoryScanID: String?
     public var historyDevices: [Device] = []
     public var activeComplianceFilters: Set<ComplianceFramework> = []
+    public var customRules: [CustomRule] = []
+    public var showRuleEditor = false
+    public var editingRule: CustomRule?
+    public var showRulesManager = false
 
     public var complianceSummary: String {
         guard !activeComplianceFilters.isEmpty else { return "All" }
@@ -44,6 +48,7 @@ public final class ScannerViewModel {
 
     public init() {
         Logger.ui.notice("ScannerViewModel initialized")
+        customRules = CustomRulesStore.shared.load()
         loadHistory()
         ScanScheduler.shared.configure { [weak self] in
             await self?.startScan()
@@ -159,7 +164,7 @@ public final class ScannerViewModel {
                         ports: allPorts
                     )
 
-                    let vulns = self.vulnMapper.map(device: device)
+                    let vulns = self.vulnMapper.map(device: device, customRules: self.customRules)
                     device = Device(
                         ip: device.ip,
                         mac: device.mac,

@@ -26,6 +26,12 @@ public struct ContentView: View {
         .sheet(isPresented: $showTopology) {
             topologySheet
         }
+        .sheet(isPresented: $viewModel.showRulesManager) {
+            RulesManagerView(viewModel: viewModel)
+        }
+        .sheet(isPresented: $viewModel.showRuleEditor) {
+            RuleEditorView(viewModel: viewModel, rule: viewModel.editingRule)
+        }
         .keyboardShortcutHandling(viewModel: viewModel)
     }
 
@@ -501,6 +507,11 @@ public struct ContentView: View {
                 }
                 .help("Network Topology Map")
                 .disabled(viewModel.devices.isEmpty && viewModel.selectedHistoryScanID == nil)
+
+                Button(action: { viewModel.showRulesManager = true }) {
+                    Label("Custom Rules", systemImage: "doc.badge.gearshape")
+                }
+                .help("Manage Custom Rules")
 
                 Button(action: { viewModel.showConfig = true }) {
                     Label("Configure", systemImage: "gearshape")
