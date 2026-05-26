@@ -33,6 +33,42 @@ public final class ScannerViewModel {
     public init() {
         Logger.ui.notice("ScannerViewModel initialized")
         loadHistory()
+        ScanScheduler.shared.configure { [weak self] in
+            await self?.startScan()
+        }
+        if config.scheduleEnabled {
+            ScanScheduler.shared.schedule(intervalHours: config.scheduleIntervalHours)
+        }
+    }
+
+    public func checkScheduledScan() {
+        if config.scheduleEnabled && !ScanScheduler.shared.isScheduled {
+            ScanScheduler.shared.schedule(intervalHours: config.scheduleIntervalHours)
+            statusMessage = "Scheduled scans active (every \(config.scheduleIntervalHours)h)"
+        }
+    }
+
+    public func updateSchedule(enabled: Bool, intervalHours: Double) {
+        config.scheduleEnabled = enabled
+        config.scheduleIntervalHours = intervalHours
+        if enabled {
+            ScanScheduler.shared.schedule(intervalHours: intervalHours)
+            statusMessage = "Scheduled every \(intervalHours)h"
+        } else {
+            ScanScheduler.shared.cancel()
+            statusMessage = "Scheduled scans disabled"
+        }
+        saveConfig()
+    }
+
+    private func saveConfig() {
+        let encoder = JSONEncoder()
+        if let data = try? encoder.encode(config) {
+            let url = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+                .appendingPathComponent("com.lanscanner/config.json")
+            try? FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try? data.write(to: url, options: .atomic)
+        }
     }
 
     public var filteredDevices: [Device] {

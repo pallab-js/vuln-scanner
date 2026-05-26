@@ -633,6 +633,8 @@ private struct ConfigSheet: View {
     @State private var webhookURL: String
     @State private var webhookEnabled: Bool
     @State private var subnetCIDR: String
+    @State private var scheduleEnabled: Bool
+    @State private var scheduleIntervalHours: Double
 
     init(config: Binding<ScanConfig>, viewModel: ScannerViewModel) {
         _config = config
@@ -650,6 +652,8 @@ private struct ConfigSheet: View {
         _webhookURL = State(initialValue: config.wrappedValue.webhookURL)
         _webhookEnabled = State(initialValue: config.wrappedValue.webhookEnabled)
         _subnetCIDR = State(initialValue: config.wrappedValue.subnetCIDR ?? "")
+        _scheduleEnabled = State(initialValue: config.wrappedValue.scheduleEnabled)
+        _scheduleIntervalHours = State(initialValue: config.wrappedValue.scheduleIntervalHours)
     }
 
     var body: some View {
@@ -662,8 +666,11 @@ private struct ConfigSheet: View {
 
             alertsTab
                 .tabItem { Label("Alerts", systemImage: "bell") }
+
+            scheduleTab
+                .tabItem { Label("Schedule", systemImage: "clock.arrow.circlepath") }
         }
-        .frame(width: 460, height: 420)
+        .frame(width: 460, height: 460)
         .padding()
     }
 
@@ -776,6 +783,68 @@ private struct ConfigSheet: View {
         .formStyle(.grouped)
     }
 
+    private var scheduleTab: some View {
+        Form {
+            Section("Scheduled Scans") {
+                Toggle("Enable scheduled scanning", isOn: $scheduleEnabled)
+
+                if scheduleEnabled {
+                    HStack {
+                        Text("Interval (hours):").frame(width: 120, alignment: .trailing)
+                        TextField("", value: $scheduleIntervalHours, formatter: NumberFormatter())
+                            .frame(width: 80)
+                        Stepper("", value: $scheduleIntervalHours, in: 1...168, step: 1)
+                    }
+
+                    Text("Scans will run every \(Int(scheduleIntervalHours)) hour(s) while the app is open.")
+                        .font(.caption).foregroundStyle(.secondary)
+
+                    if scheduleEnabled {
+                        HStack {
+                            Image(systemName: "checkmark.circle.fill").foregroundStyle(.green)
+                            Text("Next scan: \(nextScanText)")
+                                .font(.caption)
+                        }
+                    }
+                }
+            }
+
+            Section("Launch Agent (Background)") {
+                Text("Install a launchd agent to run scans even when the app is closed.")
+                    .font(.caption).foregroundStyle(.secondary)
+
+                HStack(spacing: 12) {
+                    Button("Install Launch Agent") {
+                        if ScanScheduler.installLaunchAgent(path: Bundle.main.executablePath ?? "", intervalSeconds: Int(scheduleIntervalHours * 3600)) {
+                            viewModel.statusMessage = "Launch agent installed"
+                        } else {
+                            viewModel.errorMessage = "Failed to install launch agent"
+                        }
+                    }
+                    Button("Remove Launch Agent") {
+                        _ = ScanScheduler.uninstallLaunchAgent()
+                        viewModel.statusMessage = "Launch agent removed"
+                    }
+                }
+            }
+
+            HStack {
+                Button("Reset Defaults") { applyDefaults() }
+                Spacer()
+                Button("Done") { saveAndDismiss() }
+                    .buttonStyle(.borderedProminent)
+            }
+        }
+        .formStyle(.grouped)
+    }
+
+    private var nextScanText: String {
+        guard scheduleEnabled, let next = ScanScheduler.shared.nextScanAt else { return "—" }
+        let formatter = RelativeDateTimeFormatter()
+        formatter.unitsStyle = .full
+        return formatter.localizedString(for: next, relativeTo: Date())
+    }
+
     private func applyDefaults() {
         let d = ScanConfig.default
         portFrom = d.portRange.lowerBound; portTo = d.portRange.upperBound
@@ -784,6 +853,7 @@ private struct ConfigSheet: View {
         excludeText = ""; serviceDetection = d.serviceDetection; osDetection = d.osDetection
         scanUDP = d.scanUDP; webhookURL = d.webhookURL; webhookEnabled = d.webhookEnabled
         subnetCIDR = d.subnetCIDR ?? ""
+        scheduleEnabled = d.scheduleEnabled; scheduleIntervalHours = d.scheduleIntervalHours
     }
 
     private func saveAndDismiss() {
@@ -798,6 +868,9 @@ private struct ConfigSheet: View {
         config.webhookURL = webhookURL
         config.webhookEnabled = webhookEnabled
         config.subnetCIDR = subnetCIDR.isEmpty ? nil : subnetCIDR
+        config.scheduleEnabled = scheduleEnabled
+        config.scheduleIntervalHours = scheduleIntervalHours
+        viewModel.updateSchedule(enabled: scheduleEnabled, intervalHours: scheduleIntervalHours)
         dismiss()
     }
 }
