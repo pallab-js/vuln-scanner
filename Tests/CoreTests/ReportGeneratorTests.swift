@@ -16,9 +16,10 @@ import Foundation
     )
     let config = ScanConfig.default
     let html = gen.generateHTML(devices: [device], scanDuration: 1.5, timestamp: Date(), config: config)
-    #expect(html.contains("192.168.1.1"))
+    #expect(html.hasPrefix("<!DOCTYPE html"))
     #expect(html.contains("CVE-2024-0001"))
-    #expect(html.contains("HTTP"))
+    #expect(html.contains("192.168.1.1"))
+    #expect(html.contains("Critical vuln"))
     #expect(html.contains("Max Risk"))
 }
 
