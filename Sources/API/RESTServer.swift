@@ -26,7 +26,10 @@ public final class RESTServer: @unchecked Sendable {
 
     public func start(host: String = "127.0.0.1") throws {
         lock.lock(); defer { lock.unlock() }
-        guard !isRunning else { return }
+        if isRunning {
+            channel?.close(mode: .all, promise: nil)
+            isRunning = false
+        }
         let bootstrap = ServerBootstrap(group: group)
             .serverChannelOption(ChannelOptions.backlog, value: 256)
             .serverChannelOption(ChannelOptions.socket(.init(SOL_SOCKET), .init(SO_REUSEADDR)), value: 1)
@@ -47,13 +50,16 @@ public final class RESTServer: @unchecked Sendable {
         lock.lock(); defer { lock.unlock() }
         guard isRunning else { return }
         channel?.close(mode: .all, promise: nil)
-        try? group.syncShutdownGracefully()
+        channel = nil
         isRunning = false
         logger.notice("REST API stopped")
     }
 
     deinit {
-        if isRunning { try? group.syncShutdownGracefully() }
+        if isRunning {
+            channel?.close(mode: .all, promise: nil)
+            try? group.syncShutdownGracefully()
+        }
     }
 
     // MARK: - Request Handler (called from HTTPHandler)
