@@ -11,6 +11,7 @@ public struct Device: Codable, Identifiable, Comparable, Sendable, Hashable {
     public let vulnerabilities: [Vuln]
     public let firstSeen: Date
     public let lastSeen: Date
+    public let riskScore: Double
 
     public init(ip: String, mac: String? = nil, host: String? = nil, os: String? = nil,
                 ports: [ScanPort] = [], vulnerabilities: [Vuln] = [],
@@ -23,15 +24,33 @@ public struct Device: Codable, Identifiable, Comparable, Sendable, Hashable {
         self.vulnerabilities = vulnerabilities
         self.firstSeen = firstSeen
         self.lastSeen = lastSeen
+        self.riskScore = Device.computeRiskScore(ports: ports, vulnerabilities: vulnerabilities)
     }
 
-    public var riskScore: Double {
+    private static func computeRiskScore(ports: [ScanPort], vulnerabilities: [Vuln]) -> Double {
         guard !ports.isEmpty || !vulnerabilities.isEmpty else { return 0 }
         let vulnScore = vulnerabilities.reduce(0.0) { $0 + $1.severity }
         let avgVuln = vulnerabilities.isEmpty ? 0 : vulnScore / Double(vulnerabilities.count)
         let portWeight = min(Double(ports.filter { $0.state == .open }.count) * 0.5, 5)
         let highVulnBonus = vulnerabilities.contains(where: { $0.severity >= 7 }) ? 1.0 : 0
         return min(avgVuln + portWeight + highVulnBonus, 10)
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case ip, mac, host, os, ports, vulnerabilities, firstSeen, lastSeen
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.ip = try container.decode(String.self, forKey: .ip)
+        self.mac = try container.decodeIfPresent(String.self, forKey: .mac)
+        self.host = try container.decodeIfPresent(String.self, forKey: .host)
+        self.os = try container.decodeIfPresent(String.self, forKey: .os)
+        self.ports = try container.decode([ScanPort].self, forKey: .ports)
+        self.vulnerabilities = try container.decode([Vuln].self, forKey: .vulnerabilities)
+        self.firstSeen = try container.decodeIfPresent(Date.self, forKey: .firstSeen) ?? Date()
+        self.lastSeen = try container.decodeIfPresent(Date.self, forKey: .lastSeen) ?? Date()
+        self.riskScore = Device.computeRiskScore(ports: self.ports, vulnerabilities: self.vulnerabilities)
     }
 
     public static func < (lhs: Device, rhs: Device) -> Bool {
@@ -241,6 +260,7 @@ public struct CVECount: Codable, Identifiable, Sendable, Hashable {
 }
 
 /// Configuration for scan behaviour, alerts, scheduling, and API access.
+/// API key is stored in the system Keychain, not in serialized JSON.
 public struct ScanConfig: Codable, Sendable {
     public var portRange: ClosedRange<Int>
     public var timeout: TimeInterval
@@ -257,9 +277,21 @@ public struct ScanConfig: Codable, Sendable {
     public var scheduleIntervalHours: Double
     public var apiEnabled: Bool
     public var apiPort: Int
-    public var apiKey: String
+    public var apiKey: String {
+        get { KeychainHelper.read(key: "apiKey") ?? _apiKeyStorage }
+        set { _apiKeyStorage = newValue; _ = KeychainHelper.store(key: "apiKey", value: newValue) }
+    }
     public var autoUpdateRules: Bool
     public var rulesURL: String
+
+    private var _apiKeyStorage: String
+
+    private enum CodingKeys: String, CodingKey {
+        case portRange, timeout, maxConcurrency, excludeIPs, serviceDetection, osDetection
+        case scanUDP, udpPortRange, subnetCIDR, webhookEnabled, webhookURL
+        case scheduleEnabled, scheduleIntervalHours, apiEnabled, apiPort
+        case autoUpdateRules, rulesURL
+    }
 
     public static let `default` = ScanConfig(
         portRange: 1...1024,
@@ -304,9 +336,53 @@ public struct ScanConfig: Codable, Sendable {
         self.scheduleIntervalHours = max(1, min(scheduleIntervalHours, 168))
         self.apiEnabled = apiEnabled
         self.apiPort = max(1024, min(apiPort, 65535))
-        self.apiKey = apiKey
+        self._apiKeyStorage = apiKey
         self.autoUpdateRules = autoUpdateRules
         self.rulesURL = rulesURL
+        if !apiKey.isEmpty { _ = KeychainHelper.store(key: "apiKey", value: apiKey) }
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        portRange = try container.decode(ClosedRange<Int>.self, forKey: .portRange)
+        timeout = try container.decode(TimeInterval.self, forKey: .timeout)
+        maxConcurrency = try container.decode(Int.self, forKey: .maxConcurrency)
+        excludeIPs = try container.decode([String].self, forKey: .excludeIPs)
+        serviceDetection = try container.decode(Bool.self, forKey: .serviceDetection)
+        osDetection = try container.decode(Bool.self, forKey: .osDetection)
+        scanUDP = try container.decodeIfPresent(Bool.self, forKey: .scanUDP) ?? false
+        udpPortRange = try container.decodeIfPresent(ClosedRange<Int>.self, forKey: .udpPortRange) ?? 1...1024
+        subnetCIDR = try container.decodeIfPresent(String.self, forKey: .subnetCIDR)
+        webhookEnabled = try container.decodeIfPresent(Bool.self, forKey: .webhookEnabled) ?? false
+        webhookURL = try container.decodeIfPresent(String.self, forKey: .webhookURL) ?? ""
+        scheduleEnabled = try container.decodeIfPresent(Bool.self, forKey: .scheduleEnabled) ?? false
+        scheduleIntervalHours = try container.decodeIfPresent(Double.self, forKey: .scheduleIntervalHours) ?? 24
+        apiEnabled = try container.decodeIfPresent(Bool.self, forKey: .apiEnabled) ?? false
+        apiPort = try container.decodeIfPresent(Int.self, forKey: .apiPort) ?? 8080
+        autoUpdateRules = try container.decodeIfPresent(Bool.self, forKey: .autoUpdateRules) ?? false
+        rulesURL = try container.decodeIfPresent(String.self, forKey: .rulesURL) ?? ""
+        _apiKeyStorage = KeychainHelper.read(key: "apiKey") ?? ""
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(portRange, forKey: .portRange)
+        try container.encode(timeout, forKey: .timeout)
+        try container.encode(maxConcurrency, forKey: .maxConcurrency)
+        try container.encode(excludeIPs, forKey: .excludeIPs)
+        try container.encode(serviceDetection, forKey: .serviceDetection)
+        try container.encode(osDetection, forKey: .osDetection)
+        try container.encode(scanUDP, forKey: .scanUDP)
+        try container.encode(udpPortRange, forKey: .udpPortRange)
+        try container.encodeIfPresent(subnetCIDR, forKey: .subnetCIDR)
+        try container.encode(webhookEnabled, forKey: .webhookEnabled)
+        try container.encode(webhookURL, forKey: .webhookURL)
+        try container.encode(scheduleEnabled, forKey: .scheduleEnabled)
+        try container.encode(scheduleIntervalHours, forKey: .scheduleIntervalHours)
+        try container.encode(apiEnabled, forKey: .apiEnabled)
+        try container.encode(apiPort, forKey: .apiPort)
+        try container.encode(autoUpdateRules, forKey: .autoUpdateRules)
+        try container.encode(rulesURL, forKey: .rulesURL)
     }
 }
 

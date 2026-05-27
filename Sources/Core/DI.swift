@@ -55,28 +55,20 @@ public final class DIContainer: @unchecked Sendable {
     public func registerSingleton<T>(_ type: T.Type, factory: @escaping @Sendable (DIContainer) throws -> T) {
         let key = String(describing: type)
         lock.lock()
-        let existingFactory = factories[key]
-        lock.unlock()
-        if existingFactory != nil { return }
-
-        let singletonFactory: @Sendable (DIContainer) throws -> Any = { container in
-            container.lock.lock()
-            if let existing = container.singletons[key] {
-                container.lock.unlock()
-                return existing
-            }
-            container.lock.unlock()
-
-            let instance = try factory(container)
-
-            container.lock.lock()
-            container.singletons[key] = instance
-            container.lock.unlock()
-            return instance
+        if factories[key] != nil {
+            lock.unlock()
+            return
         }
-
-        lock.lock()
-        factories[key] = singletonFactory
+        let instance: Any
+        do {
+            instance = try factory(self)
+        } catch {
+            lock.unlock()
+            return
+        }
+        let sendableInstance = Box(instance)
+        singletons[key] = instance
+        factories[key] = { _ in sendableInstance.value }
         lock.unlock()
     }
 
@@ -107,4 +99,10 @@ public final class DIContainer: @unchecked Sendable {
         singletons.removeAll()
         lock.unlock()
     }
+}
+
+/// Thread-safe wrapper to capture Any in a @Sendable closure.
+private final class Box: @unchecked Sendable {
+    let value: Any
+    init(_ value: Any) { self.value = value }
 }

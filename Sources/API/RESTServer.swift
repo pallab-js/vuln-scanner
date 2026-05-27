@@ -17,7 +17,8 @@ public final class RESTServer: @unchecked Sendable {
     public var apiKey: String = ""
 
     private var channel: Channel?
-    private let group = MultiThreadedEventLoopGroup(numberOfThreads: 1)
+    private var group: EventLoopGroup?
+    private static let sharedGroup: EventLoopGroup = MultiThreadedEventLoopGroup(numberOfThreads: 1)
     private let store = ScanStore.shared
     private let logger = Logger(category: .config)
     private let lock = OSAllocatedUnfairLock()
@@ -30,6 +31,8 @@ public final class RESTServer: @unchecked Sendable {
             channel?.close(mode: .all, promise: nil)
             isRunning = false
         }
+        let group = Self.sharedGroup
+        self.group = group
         let bootstrap = ServerBootstrap(group: group)
             .serverChannelOption(ChannelOptions.backlog, value: 256)
             .serverChannelOption(ChannelOptions.socket(.init(SOL_SOCKET), .init(SO_REUSEADDR)), value: 1)
@@ -56,10 +59,7 @@ public final class RESTServer: @unchecked Sendable {
     }
 
     deinit {
-        if isRunning {
-            channel?.close(mode: .all, promise: nil)
-            try? group.syncShutdownGracefully()
-        }
+        channel?.close(mode: .all, promise: nil)
     }
 
     // MARK: - Request Handler (called from HTTPHandler)
@@ -70,7 +70,9 @@ public final class RESTServer: @unchecked Sendable {
 
         if !apiKey.isEmpty {
             let authHeader = request.headers["Authorization"].first ?? ""
-            guard authHeader == "Bearer \(apiKey)" else {
+            let expected = "Bearer \(apiKey)"
+            guard authHeader.count == expected.count,
+                  constantTimeCompare(authHeader, expected) else {
                 return (.unauthorized, jsonString(["error": "unauthorized"]))
             }
         }
@@ -291,6 +293,18 @@ public final class RESTServer: @unchecked Sendable {
 }
 
 // MARK: - NIO Channel Handler
+/// Constant-time string comparison to prevent timing side-channel attacks.
+private func constantTimeCompare(_ lhs: String, _ rhs: String) -> Bool {
+    guard lhs.count == rhs.count else { return false }
+    let lhsBytes = [UInt8](lhs.utf8)
+    let rhsBytes = [UInt8](rhs.utf8)
+    var result: UInt8 = 0
+    for i in 0..<lhsBytes.count {
+        result |= lhsBytes[i] ^ rhsBytes[i]
+    }
+    return result == 0
+}
+
 /// Decodes HTTP requests and routes them to RESTServer.handle().
 /// @unchecked Sendable is required for NIO channel handlers (always run on a single EL).
 private final class HTTPHandler: ChannelInboundHandler, @unchecked Sendable {

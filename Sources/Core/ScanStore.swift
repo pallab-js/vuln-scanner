@@ -6,7 +6,7 @@ import GRDB
 /// through GRDB's DatabaseQueue which is thread-safe.
 public final class ScanStore: @unchecked Sendable {
     public static let shared = ScanStore()
-    private let db: DatabaseQueue
+    private var db: DatabaseQueue
     private let encoder: JSONEncoder = {
         let e = JSONEncoder()
         e.outputFormatting = [.prettyPrinted, .sortedKeys]
@@ -14,26 +14,45 @@ public final class ScanStore: @unchecked Sendable {
     }()
     private let decoder = JSONDecoder()
 
+    enum StoreInitError: Error, LocalizedError {
+        case databaseUnavailable(String)
+        var errorDescription: String? {
+            switch self { case .databaseUnavailable(let path): return "Scan database unavailable at \(path)" }
+        }
+    }
+
     private init() {
         let paths = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)
         let dir = paths[0].appendingPathComponent("com.lanscanner", isDirectory: true)
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         let dbPath = dir.appendingPathComponent("scans.db").path
-        db = try! DatabaseQueue(path: dbPath)
-        try! db.write { db in
-            try db.create(table: "scans", ifNotExists: true) { t in
-                t.column("scan_id", .text).primaryKey()
-                t.column("timestamp", .datetime).notNull()
-                t.column("duration", .double).notNull()
-                t.column("device_count", .integer).notNull()
-                t.column("total_open_ports", .integer).notNull()
-                t.column("total_vulnerabilities", .integer).notNull()
-                t.column("risk_score", .double).notNull()
-                t.column("config_json", .text).notNull()
-                t.column("devices_json", .text).notNull()
-            }
+        guard let queue = try? DatabaseQueue(path: dbPath) else {
+            Logger.config.error("Failed to open database at \(dbPath), using in-memory fallback")
+            self.db = try! DatabaseQueue()
+            Logger.config.notice("ScanStore initialized with in-memory SQLite (persistence disabled)")
+            return
         }
-        Logger.config.notice("ScanStore initialized with SQLite at \(dbPath)")
+        self.db = queue
+        do {
+            try db.write { db in
+                try db.create(table: "scans", ifNotExists: true) { t in
+                    t.column("scan_id", .text).primaryKey()
+                    t.column("timestamp", .datetime).notNull()
+                    t.column("duration", .double).notNull()
+                    t.column("device_count", .integer).notNull()
+                    t.column("total_open_ports", .integer).notNull()
+                    t.column("total_vulnerabilities", .integer).notNull()
+                    t.column("risk_score", .double).notNull()
+                    t.column("config_json", .text).notNull()
+                    t.column("devices_json", .text).notNull()
+                }
+            }
+            Logger.config.notice("ScanStore initialized with SQLite at \(dbPath)")
+        } catch {
+            Logger.config.error("Failed to create schema: \(error.localizedDescription), using in-memory fallback")
+            self.db = try! DatabaseQueue()
+            Logger.config.notice("ScanStore initialized with in-memory SQLite (persistence disabled)")
+        }
     }
 
     // MARK: - Save Scan
@@ -83,35 +102,32 @@ public final class ScanStore: @unchecked Sendable {
     }
 
     // MARK: - History
+    private func rowToSummary(_ row: Row) -> ScanSummary? {
+        guard let configData = row["config_json"] as? String,
+              let configDataObj = configData.data(using: .utf8),
+              let config = try? decoder.decode(ScanConfig.self, from: configDataObj) else {
+            Logger.config.error("Skipping corrupt scan record: \(row["scan_id"] ?? "unknown")")
+            return nil
+        }
+        return ScanSummary(
+            scanID: row["scan_id"], timestamp: row["timestamp"], duration: row["duration"],
+            deviceCount: row["device_count"], totalOpenPorts: row["total_open_ports"],
+            totalVulnerabilities: row["total_vulnerabilities"], riskScore: row["risk_score"],
+            config: config
+        )
+    }
+
     public func loadHistory() throws -> [ScanSummary] {
         try db.read { db in
             let rows = try Row.fetchAll(db, sql: "SELECT * FROM scans ORDER BY timestamp DESC")
-            return rows.map { row in
-                let configData = row["config_json"] as! String
-                let config = try! decoder.decode(ScanConfig.self, from: configData.data(using: .utf8)!)
-                return ScanSummary(
-                    scanID: row["scan_id"], timestamp: row["timestamp"], duration: row["duration"],
-                    deviceCount: row["device_count"], totalOpenPorts: row["total_open_ports"],
-                    totalVulnerabilities: row["total_vulnerabilities"], riskScore: row["risk_score"],
-                    config: config
-                )
-            }
+            return rows.compactMap { self.rowToSummary($0) }
         }
     }
 
     public func loadHistory(limit: Int) -> [ScanSummary] {
         guard let result = try? db.read({ db in
             let rows = try Row.fetchAll(db, sql: "SELECT * FROM scans ORDER BY timestamp DESC LIMIT ?", arguments: [limit])
-            return rows.map { row in
-                let configData = row["config_json"] as! String
-                let config = try! decoder.decode(ScanConfig.self, from: configData.data(using: .utf8)!)
-                return ScanSummary(
-                    scanID: row["scan_id"], timestamp: row["timestamp"], duration: row["duration"],
-                    deviceCount: row["device_count"], totalOpenPorts: row["total_open_ports"],
-                    totalVulnerabilities: row["total_vulnerabilities"], riskScore: row["risk_score"],
-                    config: config
-                )
-            }
+            return rows.compactMap { self.rowToSummary($0) }
         }) else { return [] }
         return result
     }

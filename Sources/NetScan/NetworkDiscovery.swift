@@ -18,21 +18,30 @@ public enum NetworkDiscoveryError: Error, Sendable, LocalizedError {
 
 public actor ConcurrencyGate {
     private let maxConcurrency: Int
-    private var running: Int = 0
+    private var current = 0
+    private var waiters: [CheckedContinuation<Void, Never>] = []
 
     public init(maxConcurrency: Int) {
         self.maxConcurrency = maxConcurrency
     }
 
     public func waitIfNeeded() async {
-        while running >= maxConcurrency {
-            try? await Task.sleep(for: .milliseconds(50))
+        if current < maxConcurrency {
+            current += 1
+            return
         }
-        running += 1
+        await withCheckedContinuation { continuation in
+            waiters.append(continuation)
+        }
     }
 
     public func signal() {
-        running -= 1
+        if let waiter = waiters.first {
+            waiters.removeFirst()
+            waiter.resume()
+        } else {
+            current -= 1
+        }
     }
 }
 
@@ -259,7 +268,26 @@ extension NetworkDiscovery {
 
     private static func resolveHostnameStatic(ip: String) async -> String? {
         await withCheckedContinuation { continuation in
-            let host = CFHostCreateWithName(nil, ip as CFString).takeRetainedValue()
+            var addr = in_addr()
+            guard inet_pton(AF_INET, ip, &addr) == 1 else {
+                continuation.resume(returning: nil)
+                return
+            }
+            let sockAddr = sockaddr_in(
+                sin_len: UInt8(MemoryLayout<sockaddr_in>.size),
+                sin_family: sa_family_t(AF_INET),
+                sin_port: 0,
+                sin_addr: addr,
+                sin_zero: (0, 0, 0, 0, 0, 0, 0, 0)
+            )
+            let cfData = withUnsafePointer(to: sockAddr) { ptr in
+                CFDataCreate(nil, ptr.withMemoryRebound(to: UInt8.self, capacity: MemoryLayout<sockaddr_in>.size) { $0 }, CFIndex(MemoryLayout<sockaddr_in>.size))
+            }
+            guard let data = cfData else {
+                continuation.resume(returning: nil)
+                return
+            }
+            let host = CFHostCreateWithAddress(nil, data).takeRetainedValue()
             var resolved = DarwinBoolean(false)
             CFHostStartInfoResolution(host, .names, nil)
             if let names = CFHostGetNames(host, &resolved)?.takeUnretainedValue() as? [String],

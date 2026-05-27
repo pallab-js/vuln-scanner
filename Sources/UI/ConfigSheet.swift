@@ -270,7 +270,7 @@ struct ConfigSheet: View {
 
                     HStack {
                         Text("API Key:").frame(width: 50, alignment: .trailing)
-                        TextField("Leave empty for no auth", text: $apiKey)
+                        SecureField("Leave empty for no auth", text: $apiKey)
                             .frame(width: 200)
                             .font(.caption)
                     }

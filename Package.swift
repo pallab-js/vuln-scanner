@@ -2,17 +2,10 @@
 import PackageDescription
 
 #if os(macOS)
-let testingFrameworkPath = "/Library/Developer/CommandLineTools/Library/Developer/Frameworks"
-let testingLibPath = "/Library/Developer/CommandLineTools/Library/Developer/usr/lib"
-let testSwiftSettings: [SwiftSetting] = [
-    .unsafeFlags(["-F", testingFrameworkPath]),
-    .unsafeFlags(["-L", testingLibPath]),
-]
-let testLinkerSettings: [LinkerSetting] = [
-    .unsafeFlags(["-Xlinker", "-rpath", "-Xlinker", testingFrameworkPath]),
-    .unsafeFlags(["-Xlinker", "-rpath", "-Xlinker", testingLibPath]),
-    .unsafeFlags(["-Xlinker", "-F", "-Xlinker", testingFrameworkPath]),
-]
+let testFrameworkPath = "/Library/Developer/CommandLineTools/Library/Developer/Frameworks"
+let testSwiftSettings: [SwiftSetting] = [.unsafeFlags(["-F", testFrameworkPath])]
+let testInteropLibPath = "/Library/Developer/CommandLineTools/Library/Developer/usr/lib"
+let testLinkerSettings: [LinkerSetting] = [.unsafeFlags(["-Xlinker", "-rpath", "-Xlinker", testFrameworkPath, "-Xlinker", "-rpath", "-Xlinker", testInteropLibPath, "-F", testFrameworkPath])]
 #else
 let testSwiftSettings: [SwiftSetting] = []
 let testLinkerSettings: [LinkerSetting] = []
@@ -71,29 +64,9 @@ let package = Package(
             name: "App",
             dependencies: ["Core", "NetScan", "Engine", "UI", "API"]
         ),
-        .testTarget(
-            name: "CoreTests",
-            dependencies: ["Core"],
-            swiftSettings: testSwiftSettings,
-            linkerSettings: testLinkerSettings
-        ),
-        .testTarget(
-            name: "NetScanTests",
-            dependencies: ["NetScan", "Core"],
-            swiftSettings: testSwiftSettings,
-            linkerSettings: testLinkerSettings
-        ),
-        .testTarget(
-            name: "EngineTests",
-            dependencies: ["Engine", "NetScan", "Core"],
-            swiftSettings: testSwiftSettings,
-            linkerSettings: testLinkerSettings
-        ),
-        .testTarget(
-            name: "APITests",
-            dependencies: ["API", "Core", "NetScan", "Engine"],
-            swiftSettings: testSwiftSettings,
-            linkerSettings: testLinkerSettings
-        ),
+        .testTarget(name: "CoreTests", dependencies: ["Core"], swiftSettings: testSwiftSettings, linkerSettings: testLinkerSettings),
+        .testTarget(name: "NetScanTests", dependencies: ["NetScan", "Core"], swiftSettings: testSwiftSettings, linkerSettings: testLinkerSettings),
+        .testTarget(name: "EngineTests", dependencies: ["Engine", "NetScan", "Core"], swiftSettings: testSwiftSettings, linkerSettings: testLinkerSettings),
+        .testTarget(name: "APITests", dependencies: ["API", "Core", "NetScan", "Engine"], swiftSettings: testSwiftSettings, linkerSettings: testLinkerSettings),
     ]
 )

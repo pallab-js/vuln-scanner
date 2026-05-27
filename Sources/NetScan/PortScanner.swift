@@ -8,8 +8,12 @@ public struct PortScanner: Sendable {
     private let eventLoopGroup: EventLoopGroup
     private let maxConcurrency: Int
 
+    private static let sharedELG: EventLoopGroup = {
+        MultiThreadedEventLoopGroup(numberOfThreads: 8)
+    }()
+
     public init(maxConcurrency: Int = 64) {
-        self.eventLoopGroup = MultiThreadedEventLoopGroup(numberOfThreads: min(maxConcurrency / 8, 8))
+        self.eventLoopGroup = Self.sharedELG
         self.maxConcurrency = min(maxConcurrency, 64)
     }
 
@@ -58,9 +62,10 @@ public struct PortScanner: Sendable {
         let maxRetries = min(max(retries, 0), 3)
 
         for attempt in 0...maxRetries {
+            if Task.isCancelled { return ScanPort(number: port, state: .closed, transport: .tcp) }
+
             if attempt > 0 {
-                let delay = Double(attempt) * 0.1
-                try? await Task.sleep(for: .seconds(delay))
+                try? await Task.sleep(for: .seconds(Double(attempt) * 0.1))
             }
 
             let result = await attemptConnect(ip: ip, port: port, timeout: timeout, eventLoopGroup: eventLoopGroup)
@@ -129,7 +134,7 @@ extension PortScanner {
 
     private static func readBanner(channel: Channel) async -> String? {
         await withCheckedContinuation { continuation in
-            let handler = BannerReadHandler { banner in
+            let handler = BannerReadHandler(timeout: 0.5) { banner in
                 continuation.resume(returning: banner)
             }
             do {
@@ -201,30 +206,46 @@ extension PortScanner {
 }
 
 // MARK: - NIO Handlers
-/// Reads banner data from an open TCP connection.
-/// @unchecked Sendable is required for NIO channel handlers (always run on a single EL).
 private final class BannerReadHandler: ChannelInboundHandler, @unchecked Sendable {
     typealias InboundIn = ByteBuffer
     private let completion: (String?) -> Void
     private var bannerData = Data()
+    private var didComplete = false
+    private let timeout: TimeAmount
 
-    init(completion: @escaping (String?) -> Void) {
+    init(timeout: TimeInterval = 1.0, completion: @escaping (String?) -> Void) {
+        self.timeout = .nanoseconds(Int64(timeout * 1_000_000_000))
         self.completion = completion
+    }
+
+    func channelActive(context: ChannelHandlerContext) {
+        context.eventLoop.scheduleTask(in: timeout) { [weak self] in
+            self?.finish()
+        }
     }
 
     func channelRead(context: ChannelHandlerContext, data: NIOAny) {
         var buffer = unwrapInboundIn(data)
         if let bytes = buffer.readBytes(length: buffer.readableBytes) {
             bannerData.append(contentsOf: bytes)
-            if bannerData.count > 1024 {
-                let banner = String(data: bannerData.prefix(1024), encoding: .utf8)
-                completion(banner)
+            if bannerData.count >= 1024 {
+                finish()
             }
         }
     }
 
+    func channelInactive(context: ChannelHandlerContext) {
+        finish()
+    }
+
     func errorCaught(context: ChannelHandlerContext, error: Error) {
-        let banner = String(data: bannerData, encoding: .utf8)
+        finish()
+    }
+
+    private func finish() {
+        guard !didComplete else { return }
+        didComplete = true
+        let banner = bannerData.isEmpty ? nil : String(data: bannerData.prefix(1024), encoding: .utf8)
         completion(banner)
     }
 }

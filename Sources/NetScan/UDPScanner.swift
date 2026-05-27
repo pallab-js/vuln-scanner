@@ -6,23 +6,32 @@ import Core
 public struct UDPScanner: Sendable {
     private let logger = Logger(category: .scanning)
     private let eventLoopGroup: EventLoopGroup
+    private let maxConcurrency: Int
 
-    public init(eventLoopGroup: EventLoopGroup = MultiThreadedEventLoopGroup(numberOfThreads: 4)) {
-        self.eventLoopGroup = eventLoopGroup
+    private static let sharedELG: EventLoopGroup = {
+        MultiThreadedEventLoopGroup(numberOfThreads: 4)
+    }()
+
+    public init(eventLoopGroup: EventLoopGroup? = nil, maxConcurrency: Int = 32) {
+        self.eventLoopGroup = eventLoopGroup ?? Self.sharedELG
+        self.maxConcurrency = min(maxConcurrency, 64)
     }
 
     public func scan(ip: String, ports: [Int], timeout: TimeInterval = 2.0) async throws -> [ScanPort] {
         logger.notice("Starting UDP scan on \(ip) for \(ports.count) ports")
 
+        let gate = ScanGateUD(limit: maxConcurrency)
         var results: [ScanPort] = []
 
         try await withThrowingTaskGroup(of: ScanPort.self) { group in
             for port in ports {
                 try Task.checkCancellation()
+                await gate.wait()
                 let portNum = port
 
                 group.addTask {
-                    await self.scanPort(ip: ip, port: portNum, timeout: timeout)
+                    defer { Task { await gate.signal() } }
+                    return await self.scanPort(ip: ip, port: portNum, timeout: timeout)
                 }
             }
 
@@ -94,6 +103,36 @@ public struct UDPScanner: Sendable {
             5355: "llmnr"
         ]
         return services[port]
+    }
+}
+
+/// Limits concurrent UDP probe tasks to prevent resource exhaustion.
+private actor ScanGateUD {
+    private let limit: Int
+    private var current = 0
+    private var waiters: [CheckedContinuation<Void, Never>] = []
+
+    init(limit: Int) {
+        self.limit = limit
+    }
+
+    func wait() async {
+        if current < limit {
+            current += 1
+            return
+        }
+        await withCheckedContinuation { continuation in
+            waiters.append(continuation)
+        }
+    }
+
+    func signal() {
+        if let waiter = waiters.first {
+            waiters.removeFirst()
+            waiter.resume()
+        } else {
+            current -= 1
+        }
     }
 }
 
