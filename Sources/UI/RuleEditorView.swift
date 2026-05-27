@@ -164,7 +164,8 @@ struct RuleEditorView: View {
             }
             .padding()
         }
-        .frame(width: 480, height: 580)
+        .frame(minWidth: 420, idealWidth: 480, minHeight: 420, idealHeight: 580)
+        .onExitCommand { dismiss() }
     }
 
     private func toggleBadge(_ name: String, color: Color, isOn: Binding<Bool>) -> some View {
@@ -310,7 +311,8 @@ struct RulesManagerView: View {
                 .listStyle(.plain)
             }
         }
-        .frame(width: 440, height: 420)
+        .frame(minWidth: 380, idealWidth: 440, minHeight: 360, idealHeight: 420)
+        .onExitCommand { dismiss() }
         .sheet(isPresented: $showNewRule) {
             RuleEditorView(viewModel: viewModel, rule: nil)
         }

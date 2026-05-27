@@ -27,10 +27,16 @@ let package = Package(
         .executable(name: "LANScanner", targets: ["App"])
     ],
     dependencies: [
-        .package(url: "https://github.com/apple/swift-nio.git", from: "2.65.0")
+        .package(url: "https://github.com/apple/swift-nio.git", from: "2.65.0"),
+        .package(url: "https://github.com/groue/GRDB.swift.git", from: "6.29.0"),
     ],
     targets: [
-        .target(name: "Core"),
+        .target(
+            name: "Core",
+            dependencies: [
+                .product(name: "GRDB", package: "grdb.swift"),
+            ]
+        ),
         .target(
             name: "NetScan",
             dependencies: [
@@ -80,6 +86,12 @@ let package = Package(
         .testTarget(
             name: "EngineTests",
             dependencies: ["Engine", "NetScan", "Core"],
+            swiftSettings: testSwiftSettings,
+            linkerSettings: testLinkerSettings
+        ),
+        .testTarget(
+            name: "APITests",
+            dependencies: ["API", "Core", "NetScan", "Engine"],
             swiftSettings: testSwiftSettings,
             linkerSettings: testLinkerSettings
         ),

@@ -7,7 +7,7 @@ public struct ReportGenerator: Sendable {
         let totalDevices = devices.count
         let totalOpen = devices.reduce(0) { $0 + $1.ports.filter { $0.state == .open }.count }
         let totalVulns = devices.reduce(0) { $0 + $1.vulnerabilities.count }
-        let avgRisk = totalDevices > 0 ? devices.reduce(0.0) { $0 + $1.riskScore } / Double(totalDevices) : 0
+        let maxRisk = devices.map(\.riskScore).max() ?? 0
         let critical = devices.reduce(0) { $0 + $1.vulnerabilities.filter { $0.severity >= 9 }.count }
         let high = devices.reduce(0) { $0 + $1.vulnerabilities.filter { $0.severity >= 7 && $0.severity < 9 }.count }
         let medium = devices.reduce(0) { $0 + $1.vulnerabilities.filter { $0.severity >= 4 && $0.severity < 7 }.count }
@@ -68,7 +68,7 @@ public struct ReportGenerator: Sendable {
             <div class="card \(high > 0 ? "high" : "")"><div class="value">\(high)</div><div class="label">High</div></div>
             <div class="card \(medium > 0 ? "medium" : "")"><div class="value">\(medium)</div><div class="label">Medium</div></div>
             <div class="card \(low > 0 ? "low" : "")"><div class="value">\(low)</div><div class="label">Low</div></div>
-            <div class="card"><div class="value">\(String(format: "%.1f", avgRisk))</div><div class="label">Risk Score</div></div>
+            <div class="card"><div class="value">\(String(format: "%.1f", maxRisk))</div><div class="label">Max Risk</div></div>
             <div class="card"><div class="value">\(String(format: "%.1fs", scanDuration))</div><div class="label">Duration</div></div>
         </div>
 

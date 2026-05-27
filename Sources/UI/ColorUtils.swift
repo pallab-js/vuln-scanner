@@ -10,7 +10,11 @@ func tagColor(_ hex: String) -> Color {
 }
 
 func riskColor(_ score: Double) -> Color {
-    switch score { case 7...: .red case 4...: .orange case 1...: .yellow default: .green }
+    switch score { case 9...: .red case 7...: .orange case 4...: .yellow case 1...: .blue default: .gray }
+}
+
+func riskLabel(_ score: Double) -> String {
+    switch score { case 9...: "CRITICAL" case 7...: "HIGH" case 4...: "MEDIUM" case 1...: "LOW" default: "INFO" }
 }
 
 func frameworkColor(_ fw: ComplianceFramework) -> Color {

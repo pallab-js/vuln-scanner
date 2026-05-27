@@ -36,10 +36,6 @@ struct LANScannerApp: App {
     }
 
     private func registerServices() {
-        let container = DIContainer.shared
-        container.registerSingleton(AppState.self) { _ in
-            AppState()
-        }
         Logger.lifecycle.debug("Services registered")
     }
 }
@@ -108,7 +104,7 @@ enum CLIRunner {
             let duration = Date().timeIntervalSince(startTime)
             let totalOpen = scannedDevices.reduce(0) { $0 + $1.ports.filter { $0.state == .open }.count }
             let totalVulns = scannedDevices.reduce(0) { $0 + $1.vulnerabilities.count }
-            let avgRisk = scannedDevices.isEmpty ? 0 : scannedDevices.reduce(0.0) { $0 + $1.riskScore } / Double(scannedDevices.count)
+            let maxRisk = scannedDevices.map(\.riskScore).max() ?? 0
             let result = ScanResult(devices: scannedDevices, scanDuration: duration, totalPortsScanned: config.portRange.count)
             _ = try? store.save(scanResult: result, config: config, duration: duration)
 
@@ -124,7 +120,7 @@ enum CLIRunner {
                 print("Report: \(path)")
             }
 
-            print("Scan: \(scannedDevices.count) devices, \(totalOpen) open ports, \(totalVulns) vulns, risk \(String(format: "%.1f", avgRisk)) [\(String(format: "%.1f", duration))s]")
+            print("Scan: \(scannedDevices.count) devices, \(totalOpen) open ports, \(totalVulns) vulns, max risk \(String(format: "%.1f", maxRisk)) [\(String(format: "%.1f", duration))s]")
             for d in scannedDevices.sorted(by: { $0.riskScore > $1.riskScore }) {
                 let vc = d.vulnerabilities.count
                 let pc = d.ports.filter { $0.state == .open }.count
@@ -135,7 +131,7 @@ enum CLIRunner {
 
             if config.webhookEnabled {
                 let summary = ScanSummary(timestamp: result.timestamp, duration: duration, deviceCount: scannedDevices.count,
-                    totalOpenPorts: totalOpen, totalVulnerabilities: totalVulns, riskScore: avgRisk, config: config)
+                    totalOpenPorts: totalOpen, totalVulnerabilities: totalVulns, riskScore: maxRisk, config: config)
                 await alert.sendScanComplete(scanSummary: summary, devices: scannedDevices, webhookURL: config.webhookURL)
             }
 

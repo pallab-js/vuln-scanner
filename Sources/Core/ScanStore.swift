@@ -1,45 +1,48 @@
 import Foundation
+import GRDB
 
-/// JSON file-based persistence for scan results and history index.
-/// @unchecked Sendable is safe because all mutable state is accessed via
-/// the file system (JSON reads/writes are inherently serialized).
+/// SQLite persistence for scan results and history.
+/// @unchecked Sendable is safe because all mutable state is accessed
+/// through GRDB's DatabaseQueue which is thread-safe.
 public final class ScanStore: @unchecked Sendable {
     public static let shared = ScanStore()
-    private let fileManager = FileManager.default
-    private let decoder = JSONDecoder()
+    private let db: DatabaseQueue
     private let encoder: JSONEncoder = {
         let e = JSONEncoder()
         e.outputFormatting = [.prettyPrinted, .sortedKeys]
         return e
     }()
+    private let decoder = JSONDecoder()
 
-    private init() {}
-
-    private var appSupportURL: URL {
-        let paths = fileManager.urls(for: .applicationSupportDirectory, in: .userDomainMask)
+    private init() {
+        let paths = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)
         let dir = paths[0].appendingPathComponent("com.lanscanner", isDirectory: true)
-        try? fileManager.createDirectory(at: dir, withIntermediateDirectories: true)
-        return dir
-    }
-
-    private var scansDir: URL {
-        let dir = appSupportURL.appendingPathComponent("scans", isDirectory: true)
-        try? fileManager.createDirectory(at: dir, withIntermediateDirectories: true)
-        return dir
-    }
-
-    private var indexPath: URL {
-        appSupportURL.appendingPathComponent("index.json")
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        let dbPath = dir.appendingPathComponent("scans.db").path
+        db = try! DatabaseQueue(path: dbPath)
+        try! db.write { db in
+            try db.create(table: "scans", ifNotExists: true) { t in
+                t.column("scan_id", .text).primaryKey()
+                t.column("timestamp", .datetime).notNull()
+                t.column("duration", .double).notNull()
+                t.column("device_count", .integer).notNull()
+                t.column("total_open_ports", .integer).notNull()
+                t.column("total_vulnerabilities", .integer).notNull()
+                t.column("risk_score", .double).notNull()
+                t.column("config_json", .text).notNull()
+                t.column("devices_json", .text).notNull()
+            }
+        }
+        Logger.config.notice("ScanStore initialized with SQLite at \(dbPath)")
     }
 
     // MARK: - Save Scan
     public func save(scanResult: ScanResult, config: ScanConfig, duration: TimeInterval) throws -> String {
         let scanID = UUID().uuidString
-        let scanDir = scansDir.appendingPathComponent(scanID, isDirectory: true)
-        try fileManager.createDirectory(at: scanDir, withIntermediateDirectories: true)
-
         let devicesData = try encoder.encode(scanResult.devices)
-        try devicesData.write(to: scanDir.appendingPathComponent("devices.json"), options: .atomic)
+        let devicesJSON = String(data: devicesData, encoding: .utf8)!
+        let configData = try encoder.encode(config)
+        let configJSON = String(data: configData, encoding: .utf8)!
 
         let summary = ScanSummary(
             scanID: scanID,
@@ -48,15 +51,21 @@ public final class ScanStore: @unchecked Sendable {
             deviceCount: scanResult.devices.count,
             totalOpenPorts: scanResult.devices.reduce(0) { $0 + $1.ports.filter { $0.state == .open }.count },
             totalVulnerabilities: scanResult.devices.reduce(0) { $0 + $1.vulnerabilities.count },
-            riskScore: scanResult.devices.isEmpty ? 0 : scanResult.devices.reduce(0.0) { $0 + $1.riskScore } / Double(scanResult.devices.count),
+            riskScore: scanResult.devices.map(\.riskScore).max() ?? 0,
             config: config
         )
 
-        var index = try loadIndex()
-        index.append(summary)
-        index.sort { $0.timestamp > $1.timestamp }
-        let indexData = try encoder.encode(index)
-        try indexData.write(to: indexPath, options: .atomic)
+        try db.write { db in
+            try db.execute(sql: """
+                INSERT INTO scans (scan_id, timestamp, duration, device_count, total_open_ports,
+                                   total_vulnerabilities, risk_score, config_json, devices_json)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """, arguments: [
+                    scanID, summary.timestamp, summary.duration, summary.deviceCount,
+                    summary.totalOpenPorts, summary.totalVulnerabilities, summary.riskScore,
+                    configJSON, devicesJSON,
+                ])
+        }
 
         Logger.config.notice("Scan saved: \(scanID) (\(scanResult.devices.count) devices)")
         return scanID
@@ -64,34 +73,59 @@ public final class ScanStore: @unchecked Sendable {
 
     // MARK: - Load Scan
     public func loadDevices(scanID: String) throws -> [Device] {
-        let path = scansDir.appendingPathComponent(scanID).appendingPathComponent("devices.json")
-        let data = try Data(contentsOf: path)
+        let row = try db.read { db in
+            try Row.fetchOne(db, sql: "SELECT devices_json FROM scans WHERE scan_id = ?", arguments: [scanID])
+        }
+        guard let json = row?["devices_json"] as? String, let data = json.data(using: .utf8) else {
+            throw ScanStoreError.scanNotFound
+        }
         return try decoder.decode([Device].self, from: data)
     }
 
     // MARK: - History
     public func loadHistory() throws -> [ScanSummary] {
-        try loadIndex()
+        try db.read { db in
+            let rows = try Row.fetchAll(db, sql: "SELECT * FROM scans ORDER BY timestamp DESC")
+            return rows.map { row in
+                let configData = row["config_json"] as! String
+                let config = try! decoder.decode(ScanConfig.self, from: configData.data(using: .utf8)!)
+                return ScanSummary(
+                    scanID: row["scan_id"], timestamp: row["timestamp"], duration: row["duration"],
+                    deviceCount: row["device_count"], totalOpenPorts: row["total_open_ports"],
+                    totalVulnerabilities: row["total_vulnerabilities"], riskScore: row["risk_score"],
+                    config: config
+                )
+            }
+        }
     }
 
     public func loadHistory(limit: Int) -> [ScanSummary] {
-        guard let index = try? loadIndex() else { return [] }
-        return Array(index.prefix(limit))
+        guard let result = try? db.read({ db in
+            let rows = try Row.fetchAll(db, sql: "SELECT * FROM scans ORDER BY timestamp DESC LIMIT ?", arguments: [limit])
+            return rows.map { row in
+                let configData = row["config_json"] as! String
+                let config = try! decoder.decode(ScanConfig.self, from: configData.data(using: .utf8)!)
+                return ScanSummary(
+                    scanID: row["scan_id"], timestamp: row["timestamp"], duration: row["duration"],
+                    deviceCount: row["device_count"], totalOpenPorts: row["total_open_ports"],
+                    totalVulnerabilities: row["total_vulnerabilities"], riskScore: row["risk_score"],
+                    config: config
+                )
+            }
+        }) else { return [] }
+        return result
     }
 
     public func deleteScan(scanID: String) throws {
-        let scanDir = scansDir.appendingPathComponent(scanID)
-        try? fileManager.removeItem(at: scanDir)
-        var index = try loadIndex()
-        index.removeAll { $0.scanID == scanID }
-        let indexData = try encoder.encode(index)
-        try indexData.write(to: indexPath, options: .atomic)
+        try db.write { db in
+            try db.execute(sql: "DELETE FROM scans WHERE scan_id = ?", arguments: [scanID])
+        }
         Logger.config.notice("Scan deleted: \(scanID)")
     }
 
     // MARK: - Trends
     public func computeTrends() -> TrendData {
-        guard let index = try? loadIndex(), !index.isEmpty else {
+        guard let index = try? loadHistory(), !index.isEmpty else {
             return TrendData(totalScans: 0, vulnsOverTime: [], devicesOverTime: [], riskOverTime: [], topCVE: [])
         }
 
@@ -120,11 +154,8 @@ public final class ScanStore: @unchecked Sendable {
             topCVE: topCVE
         )
     }
+}
 
-    // MARK: - Internal
-    private func loadIndex() throws -> [ScanSummary] {
-        guard fileManager.fileExists(atPath: indexPath.path) else { return [] }
-        let data = try Data(contentsOf: indexPath)
-        return try decoder.decode([ScanSummary].self, from: data)
-    }
+enum ScanStoreError: Error {
+    case scanNotFound
 }

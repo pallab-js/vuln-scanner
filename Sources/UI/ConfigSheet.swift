@@ -70,7 +70,8 @@ struct ConfigSheet: View {
             apiTab
                 .tabItem { Label("API", systemImage: "globe") }
         }
-        .frame(width: 460, height: 560)
+        .frame(minWidth: 400, idealWidth: 460, minHeight: 400, idealHeight: 560)
+        .onExitCommand { dismiss() }
         .padding()
     }
 

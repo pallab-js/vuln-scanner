@@ -138,9 +138,7 @@ public final class ScannerViewModel {
     }
 
     public var riskScore: Double {
-        guard !devices.isEmpty else { return 0 }
-        let total = devices.reduce(0.0) { $0 + $1.riskScore }
-        return total / Double(devices.count)
+        devices.map(\.riskScore).max() ?? 0
     }
 
     public var totalOpenPorts: Int {

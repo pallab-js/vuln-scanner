@@ -63,7 +63,6 @@ final class TopologyScene: SKScene {
                 label.fontSize = 9
                 label.fontColor = NSColor.secondaryLabelColor
                 label.position = CGPoint(x: node.x, y: node.y - radius - 12)
-                label.fontName = "Helvetica Neue"
                 addChild(label)
                 labelNodes[node.id] = label
             }
@@ -72,7 +71,6 @@ final class TopologyScene: SKScene {
             ipLabel.fontSize = 7
             ipLabel.fontColor = NSColor.tertiaryLabelColor
             ipLabel.position = CGPoint(x: node.x, y: node.y - radius - 22)
-            ipLabel.fontName = "Helvetica Neue"
             addChild(ipLabel)
             labelNodes["ip-\(node.id)"] = ipLabel
         }
@@ -88,10 +86,11 @@ final class TopologyScene: SKScene {
 
     private func riskColor(_ score: Double) -> NSColor {
         switch score {
-        case 7...: return .systemRed
-        case 4...: return .systemOrange
-        case 1...: return .systemYellow
-        default:   return .systemGreen
+        case 9...: return .systemRed
+        case 7...: return .systemOrange
+        case 4...: return .systemYellow
+        case 1...: return .systemBlue
+        default:   return .systemGray
         }
     }
 }

@@ -7,6 +7,7 @@ struct TagEditorView: View {
     @Environment(\.dismiss) private var dismiss
     @State private var newTagName = ""
     @State private var selectedColor = "#2196F3"
+    @FocusState private var focused: Bool
 
     private let presetColors = [
         "#F44336", "#E91E63", "#9C27B0", "#673AB7",
@@ -25,11 +26,13 @@ struct TagEditorView: View {
             HStack(spacing: 8) {
                 TextField("New tag name…", text: $newTagName)
                     .textFieldStyle(.roundedBorder)
+                    .focused($focused)
                 Button("Add") {
                     let trimmed = newTagName.trimmingCharacters(in: .whitespaces)
                     guard !trimmed.isEmpty else { return }
                     viewModel.addTag(trimmed, color: selectedColor, to: deviceIP)
                     newTagName = ""
+                    focused = true
                 }
                 .buttonStyle(.borderedProminent)
                 .disabled(newTagName.trimmingCharacters(in: .whitespaces).isEmpty)
@@ -37,13 +40,18 @@ struct TagEditorView: View {
 
             LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 6), count: 6), spacing: 6) {
                 ForEach(presetColors, id: \.self) { hex in
-                    Circle()
-                        .fill(tagColor(hex))
-                        .frame(width: 24, height: 24)
-                        .overlay(
-                            Circle().stroke(selectedColor == hex ? Color.primary : Color.clear, lineWidth: 2)
-                        )
-                        .onTapGesture { selectedColor = hex }
+                    Button {
+                        selectedColor = hex
+                    } label: {
+                        Circle()
+                            .fill(tagColor(hex))
+                            .frame(width: 24, height: 24)
+                            .overlay(
+                                Circle().stroke(selectedColor == hex ? Color.primary : Color.clear, lineWidth: 2)
+                            )
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("Color \(hex)")
                 }
             }
 
@@ -64,6 +72,7 @@ struct TagEditorView: View {
                                     Image(systemName: "trash").font(.caption)
                                 }
                                 .buttonStyle(.plain)
+                                .accessibilityLabel("Remove tag \(tag.name)")
                             }
                             .padding(.horizontal, 8).padding(.vertical, 4)
                             .background(Color(nsColor: .controlBackgroundColor))
@@ -74,7 +83,8 @@ struct TagEditorView: View {
             }
         }
         .padding()
-        .frame(width: 340, height: 340)
+        .frame(minWidth: 300, idealWidth: 340, minHeight: 300, idealHeight: 340)
+        .onExitCommand { dismiss() }
     }
 
 }

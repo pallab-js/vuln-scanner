@@ -7,7 +7,13 @@ struct DeviceRow: View {
 
     var body: some View {
         HStack(spacing: 8) {
-            Circle().fill(riskColor(device.riskScore)).frame(width: 8, height: 8)
+            HStack(spacing: 4) {
+                Circle().fill(riskColor(device.riskScore)).frame(width: 8, height: 8)
+                Text(riskLabel(device.riskScore))
+                    .font(.system(size: 7)).bold()
+                    .foregroundStyle(riskColor(device.riskScore))
+                    .frame(width: 40, alignment: .leading)
+            }
             VStack(alignment: .leading, spacing: 2) {
                 Text(device.host ?? device.ip).font(.body).lineLimit(1)
                 Text(device.ip).font(.caption).foregroundStyle(.secondary)
