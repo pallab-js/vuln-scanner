@@ -33,6 +33,9 @@ public struct ClosureFactory<T>: ServiceFactory {
     }
 }
 
+/// Lightweight service locator with singleton and transient registration.
+/// Thread-safe via OSAllocatedUnfairLock — @unchecked Sendable is required
+/// because the Sendable protocol cannot express lock-protected isolation.
 public final class DIContainer: @unchecked Sendable {
     private var factories: [String: @Sendable (DIContainer) throws -> Any] = [:]
     private var singletons: [String: Any] = [:]

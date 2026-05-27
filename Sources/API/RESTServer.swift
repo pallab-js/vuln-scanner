@@ -5,21 +5,26 @@ import NIOHTTP1
 import Core
 import NetScan
 import Engine
+import os
 
+/// NIO-based REST API server. Binds to 127.0.0.1 by default.
+/// Supports optional Bearer token auth via the `apiKey` property.
+/// @unchecked Sendable required because Channel is not Sendable.
 public final class RESTServer: @unchecked Sendable {
     public static let shared = RESTServer()
     public private(set) var isRunning = false
     public var port: Int = 8080
+    public var apiKey: String = ""
 
     private var channel: Channel?
     private let group = MultiThreadedEventLoopGroup(numberOfThreads: 1)
     private let store = ScanStore.shared
     private let logger = Logger(category: .config)
-    private let lock = NSLock()
+    private let lock = OSAllocatedUnfairLock()
 
     private init() {}
 
-    public func start() throws {
+    public func start(host: String = "127.0.0.1") throws {
         lock.lock(); defer { lock.unlock() }
         guard !isRunning else { return }
         let bootstrap = ServerBootstrap(group: group)
@@ -33,9 +38,9 @@ public final class RESTServer: @unchecked Sendable {
             .childChannelOption(ChannelOptions.socket(.init(SOL_SOCKET), .init(SO_REUSEADDR)), value: 1)
             .childChannelOption(ChannelOptions.maxMessagesPerRead, value: 1)
 
-        channel = try bootstrap.bind(host: "0.0.0.0", port: port).wait()
+        channel = try bootstrap.bind(host: host, port: port).wait()
         isRunning = true
-        logger.notice("REST API started on port \(port)")
+        logger.notice("REST API started on \(host):\(port)")
     }
 
     public func stop() {
@@ -57,9 +62,16 @@ public final class RESTServer: @unchecked Sendable {
         let uri = request.uri.split(separator: "?").first.map(String.init) ?? request.uri
         let path = uri.hasPrefix("/api/v1") ? String(uri.dropFirst(7)) : uri
 
+        if !apiKey.isEmpty {
+            let authHeader = request.headers["Authorization"].first ?? ""
+            guard authHeader == "Bearer \(apiKey)" else {
+                return (.unauthorized, jsonString(["error": "unauthorized"]))
+            }
+        }
+
         switch (method, path) {
         case (.GET, "/health"):
-            return (.ok, jsonString(["status": "ok", "version": 1]))
+            return (.ok, encodeJSON(HealthResponse(status: "ok", version: 1)))
 
         case (.GET, "/devices"):
             return handleDevices()
@@ -90,59 +102,91 @@ public final class RESTServer: @unchecked Sendable {
         }
     }
 
+    // MARK: - Codable Response Models
+    private struct DevicesResponse: Codable {
+        let devices: [JSONDevice]
+    }
+    private struct VulnsResponse: Codable {
+        let vulnerabilities: [JSONVulnWithDevice]
+        let count: Int
+    }
+    private struct JSONVulnWithDevice: Codable {
+        let id: String; let severity: Double; let description: String
+        let recommendation: String; let compliance: [String]
+        let deviceIP: String; let deviceHost: String
+    }
+    private struct ScansResponse: Codable {
+        let scans: [JSONScanSummary]
+    }
+    private struct ScanDetailResponse: Codable {
+        let scanID: String
+        let devices: [JSONDevice]
+    }
+    private struct StatusResponse: Codable {
+        let status: String
+    }
+    private struct ErrorResponse: Codable {
+        let error: String
+    }
+    private struct HealthResponse: Codable {
+        let status: String
+        let version: Int
+    }
+
     // MARK: - Route Handlers
     private func handleDevices() -> (HTTPResponseStatus, String) {
         guard let devices = latestDevices() else {
-            return (.ok, jsonString(["devices": []]))
+            return (.ok, encodeJSON(DevicesResponse(devices: [])))
         }
-        return (.ok, jsonString(["devices": devices.map(deviceJSON)]))
+        return (.ok, encodeJSON(DevicesResponse(devices: devices.map(decodeJSONDevice))))
     }
 
     private func handleDevice(ip: String) -> (HTTPResponseStatus, String) {
         guard let devices = latestDevices(),
               let device = devices.first(where: { $0.ip == ip }) else {
-            return (.notFound, jsonString(["error": "device not found"]))
+            return (.notFound, encodeJSON(ErrorResponse(error: "device not found")))
         }
-        return (.ok, jsonString(deviceJSON(device)))
+        return (.ok, encodeJSON(decodeJSONDevice(device)))
     }
 
     private func handleVulnerabilities() -> (HTTPResponseStatus, String) {
         guard let devices = latestDevices() else {
-            return (.ok, jsonString(["vulnerabilities": []]))
+            return (.ok, encodeJSON(VulnsResponse(vulnerabilities: [], count: 0)))
         }
-        let vulns = devices.flatMap { device -> [[String: Any]] in
+        let vulns = devices.flatMap { device in
             device.vulnerabilities.map { vuln in
-                var v = vulnJSON(vuln)
-                v["device_ip"] = device.ip
-                v["device_host"] = device.host ?? ""
-                return v
+                JSONVulnWithDevice(
+                    id: vuln.id, severity: vuln.severity, description: vuln.description,
+                    recommendation: vuln.recommendation ?? "", compliance: vuln.complianceIDs,
+                    deviceIP: device.ip, deviceHost: device.host ?? ""
+                )
             }
         }
-        return (.ok, jsonString(["vulnerabilities": vulns, "count": vulns.count]))
+        return (.ok, encodeJSON(VulnsResponse(vulnerabilities: vulns, count: vulns.count)))
     }
 
     private func handleScanHistory() -> (HTTPResponseStatus, String) {
         let history = store.loadHistory(limit: 50)
-        return (.ok, jsonString(["scans": history.map { summaryJSON($0) }]))
+        return (.ok, encodeJSON(ScansResponse(scans: history.map(decodeJSONSummary))))
     }
 
     private func handleScanDetail(scanID: String) -> (HTTPResponseStatus, String) {
         guard let devices = try? store.loadDevices(scanID: scanID) else {
-            return (.notFound, jsonString(["error": "scan not found"]))
+            return (.notFound, encodeJSON(ErrorResponse(error: "scan not found")))
         }
-        return (.ok, jsonString(["scan_id": scanID, "devices": devices.map(deviceJSON)]))
+        return (.ok, encodeJSON(ScanDetailResponse(scanID: scanID, devices: devices.map(decodeJSONDevice))))
     }
 
     private func handleStartScan() -> (HTTPResponseStatus, String) {
         Task {
             await runScan()
         }
-        return (.accepted, jsonString(["status": "scan started"]))
+        return (.accepted, encodeJSON(StatusResponse(status: "scan started")))
     }
 
     private func handleExport(format: String) -> (HTTPResponseStatus, String) {
         guard let devices = latestDevices() else {
-            return (.ok, jsonString(["error": "no scan data"]))
+            return (.ok, encodeJSON(ErrorResponse(error: "no scan data")))
         }
         switch format.lowercased() {
         case "json":
@@ -150,7 +194,7 @@ public final class RESTServer: @unchecked Sendable {
         case "csv":
             return (.ok, ReportGenerator().generateCSV(devices: devices))
         default:
-            return (.badRequest, jsonString(["error": "unsupported format: \(format)"]))
+            return (.badRequest, encodeJSON(ErrorResponse(error: "unsupported format: \(format)")))
         }
     }
 
@@ -179,58 +223,70 @@ public final class RESTServer: @unchecked Sendable {
         }
     }
 
-    // MARK: - JSON Helpers
+    // MARK: - Codable JSON Models
+    private struct JSONDevice: Codable {
+        let ip: String; let mac: String; let host: String; let os: String
+        let riskScore: Double; let ports: [JSONPort]; let vulnerabilities: [JSONVuln]
+    }
+    private struct JSONPort: Codable {
+        let port: Int; let service: String; let banner: String
+    }
+    private struct JSONVuln: Codable {
+        let id: String; let severity: Double; let description: String
+        let recommendation: String; let compliance: [String]
+    }
+    private struct JSONScanSummary: Codable {
+        let scanID: String; let timestamp: String; let duration: TimeInterval
+        let deviceCount: Int; let totalOpenPorts: Int; let totalVulnerabilities: Int; let riskScore: Double
+    }
+
+    private let encoder: JSONEncoder = {
+        let e = JSONEncoder()
+        e.outputFormatting = [.withoutEscapingSlashes, .sortedKeys]
+        return e
+    }()
+
     private func latestDevices() -> [Device]? {
         let history = store.loadHistory(limit: 1)
         guard let latest = history.first else { return nil }
         return try? store.loadDevices(scanID: latest.scanID)
     }
 
-    private func deviceJSON(_ d: Device) -> [String: Any] {
-        [
-            "ip": d.ip, "mac": d.mac ?? "", "host": d.host ?? "",
-            "os": d.os ?? "", "risk_score": d.riskScore,
-            "ports": d.ports.filter { $0.state == .open }.map(portJSON),
-            "vulnerabilities": d.vulnerabilities.map(vulnJSON)
-        ]
-    }
-
-    private func portJSON(_ p: ScanPort) -> [String: Any] {
-        ["port": p.number, "service": p.service ?? "", "banner": p.banner ?? ""]
-    }
-
-    private func vulnJSON(_ v: Vuln) -> [String: Any] {
-        [
-            "id": v.id, "severity": v.severity, "description": v.description,
-            "recommendation": v.recommendation ?? "", "compliance": v.complianceIDs
-        ]
-    }
-
-    private func summaryJSON(_ s: ScanSummary) -> [String: Any] {
-        [
-            "scan_id": s.scanID, "timestamp": ISO8601DateFormatter().string(from: s.timestamp),
-            "duration": s.duration, "device_count": s.deviceCount,
-            "total_open_ports": s.totalOpenPorts, "total_vulnerabilities": s.totalVulnerabilities,
-            "risk_score": s.riskScore
-        ]
-    }
-
-    private func jsonString(_ obj: [String: Any]) -> String {
-        guard let data = try? JSONSerialization.data(withJSONObject: obj, options: [.withoutEscapingSlashes]) else {
-            return "{}"
-        }
+    private func encodeJSON<T: Encodable>(_ value: T) -> String {
+        guard let data = try? encoder.encode(value) else { return "{}" }
         return String(data: data, encoding: .utf8) ?? "{}"
     }
 
-    private func jsonString(_ arr: [Any]) -> String {
-        guard let data = try? JSONSerialization.data(withJSONObject: arr, options: [.withoutEscapingSlashes]) else {
-            return "[]"
-        }
-        return String(data: data, encoding: .utf8) ?? "[]"
+    private func decodeJSONDevice(_ d: Device) -> JSONDevice {
+        JSONDevice(
+            ip: d.ip, mac: d.mac ?? "", host: d.host ?? "", os: d.os ?? "",
+            riskScore: d.riskScore,
+            ports: d.ports.filter { $0.state == .open }.map {
+                JSONPort(port: $0.number, service: $0.service ?? "", banner: $0.banner ?? "")
+            },
+            vulnerabilities: d.vulnerabilities.map {
+                JSONVuln(id: $0.id, severity: $0.severity, description: $0.description, recommendation: $0.recommendation ?? "", compliance: $0.complianceIDs)
+            }
+        )
+    }
+
+    private func decodeJSONSummary(_ s: ScanSummary) -> JSONScanSummary {
+        JSONScanSummary(
+            scanID: s.scanID, timestamp: ISO8601DateFormatter().string(from: s.timestamp),
+            duration: s.duration, deviceCount: s.deviceCount,
+            totalOpenPorts: s.totalOpenPorts, totalVulnerabilities: s.totalVulnerabilities,
+            riskScore: s.riskScore
+        )
+    }
+
+    private func jsonString(_ value: some Encodable) -> String {
+        encodeJSON(value)
     }
 }
 
 // MARK: - NIO Channel Handler
+/// Decodes HTTP requests and routes them to RESTServer.handle().
+/// @unchecked Sendable is required for NIO channel handlers (always run on a single EL).
 private final class HTTPHandler: ChannelInboundHandler, @unchecked Sendable {
     typealias InboundIn = HTTPServerRequestPart
     typealias OutboundOut = HTTPServerResponsePart

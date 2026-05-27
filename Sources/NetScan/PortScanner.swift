@@ -201,6 +201,8 @@ extension PortScanner {
 }
 
 // MARK: - NIO Handlers
+/// Reads banner data from an open TCP connection.
+/// @unchecked Sendable is required for NIO channel handlers (always run on a single EL).
 private final class BannerReadHandler: ChannelInboundHandler, @unchecked Sendable {
     typealias InboundIn = ByteBuffer
     private let completion: (String?) -> Void

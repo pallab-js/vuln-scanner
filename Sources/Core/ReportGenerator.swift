@@ -208,23 +208,44 @@ public struct ReportGenerator: Sendable {
 
     // MARK: - Machine-readable exports
     public func generateJSON(devices: [Device]) -> String {
-        let data: [[String: Any]] = devices.sorted { $0.riskScore > $1.riskScore }.map { d in
-            [
-                "ip": d.ip, "mac": d.mac ?? "", "host": d.host ?? "", "os": d.os ?? "",
-                "risk_score": d.riskScore,
-                "ports": d.ports.filter { $0.state == .open }.map { p -> [String: Any] in
-                    ["port": p.number, "service": p.service ?? "", "banner": p.banner ?? ""]
+        struct JSONDevice: Codable {
+            let ip: String
+            let mac: String
+            let host: String
+            let os: String
+            let riskScore: Double
+            let ports: [JSONPort]
+            let vulnerabilities: [JSONVuln]
+        }
+        struct JSONPort: Codable {
+            let port: Int
+            let service: String
+            let banner: String
+        }
+        struct JSONVuln: Codable {
+            let id: String
+            let severity: Double
+            let description: String
+            let recommendation: String
+            let compliance: [String]
+        }
+
+        let data = devices.sorted { $0.riskScore > $1.riskScore }.map { d in
+            JSONDevice(
+                ip: d.ip, mac: d.mac ?? "", host: d.host ?? "", os: d.os ?? "",
+                riskScore: d.riskScore,
+                ports: d.ports.filter { $0.state == .open }.map {
+                    JSONPort(port: $0.number, service: $0.service ?? "", banner: $0.banner ?? "")
                 },
-                "vulnerabilities": d.vulnerabilities.map { v -> [String: Any] in
-                    ["id": v.id, "severity": v.severity, "description": v.description,
-                     "recommendation": v.recommendation ?? "", "compliance": v.complianceIDs]
+                vulnerabilities: d.vulnerabilities.map {
+                    JSONVuln(id: $0.id, severity: $0.severity, description: $0.description, recommendation: $0.recommendation ?? "", compliance: $0.complianceIDs)
                 }
-            ]
+            )
         }
-        if let json = try? JSONSerialization.data(withJSONObject: data, options: [.prettyPrinted, .withoutEscapingSlashes]) {
-            return String(data: json, encoding: .utf8) ?? "[]"
-        }
-        return "[]"
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
+        guard let json = try? encoder.encode(data) else { return "[]" }
+        return String(data: json, encoding: .utf8) ?? "[]"
     }
 
     public func generateCSV(devices: [Device]) -> String {

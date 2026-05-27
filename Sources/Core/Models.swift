@@ -1,6 +1,6 @@
 import Foundation
 
-// MARK: - Device
+/// A discovered network device with ports, vulnerabilities, and risk assessment.
 public struct Device: Codable, Identifiable, Comparable, Sendable, Hashable {
     public var id: String { ip }
     public let ip: String
@@ -98,7 +98,7 @@ public struct Service: Codable, Identifiable, Comparable, Sendable, Hashable {
     }
 }
 
-// MARK: - Vulnerability
+/// A vulnerability finding mapped from a rule signature against a device's services or OS.
 public struct Vuln: Codable, Identifiable, Comparable, Sendable, Hashable {
     public let id: String
     public let severity: Double
@@ -171,7 +171,7 @@ public enum SeverityLevel: String, CaseIterable, Codable, Sendable, Comparable {
     }
 }
 
-// MARK: - Scan Summary (for history list)
+/// Summary of a completed scan, stored in the history index.
 public struct ScanSummary: Codable, Identifiable, Sendable {
     public var id: String { scanID }
     public let scanID: String
@@ -240,7 +240,7 @@ public struct CVECount: Codable, Identifiable, Sendable, Hashable {
     }
 }
 
-// MARK: - Scan Configuration
+/// Configuration for scan behaviour, alerts, scheduling, and API access.
 public struct ScanConfig: Codable, Sendable {
     public var portRange: ClosedRange<Int>
     public var timeout: TimeInterval
@@ -257,6 +257,7 @@ public struct ScanConfig: Codable, Sendable {
     public var scheduleIntervalHours: Double
     public var apiEnabled: Bool
     public var apiPort: Int
+    public var apiKey: String
     public var autoUpdateRules: Bool
     public var rulesURL: String
 
@@ -276,6 +277,7 @@ public struct ScanConfig: Codable, Sendable {
         scheduleIntervalHours: 24,
         apiEnabled: false,
         apiPort: 8080,
+        apiKey: "",
         autoUpdateRules: false,
         rulesURL: ""
     )
@@ -285,7 +287,7 @@ public struct ScanConfig: Codable, Sendable {
                 scanUDP: Bool = false, udpPortRange: ClosedRange<Int> = 1...1024,
                 subnetCIDR: String? = nil, webhookEnabled: Bool = false, webhookURL: String = "",
                 scheduleEnabled: Bool = false, scheduleIntervalHours: Double = 24,
-                apiEnabled: Bool = false, apiPort: Int = 8080,
+                apiEnabled: Bool = false, apiPort: Int = 8080, apiKey: String = "",
                 autoUpdateRules: Bool = false, rulesURL: String = "") {
         self.portRange = portRange
         self.timeout = timeout
@@ -302,12 +304,13 @@ public struct ScanConfig: Codable, Sendable {
         self.scheduleIntervalHours = max(1, min(scheduleIntervalHours, 168))
         self.apiEnabled = apiEnabled
         self.apiPort = max(1024, min(apiPort, 65535))
+        self.apiKey = apiKey
         self.autoUpdateRules = autoUpdateRules
         self.rulesURL = rulesURL
     }
 }
 
-// MARK: - Network Error
+/// Errors that can occur during network scanning or host discovery.
 public enum NetworkError: Error, Sendable, LocalizedError, Equatable {
     case connectionTimeout(String)
     case connectionRefused(String)

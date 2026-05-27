@@ -1,5 +1,8 @@
 import Foundation
 
+/// Manages in-app timers for periodic scans and installs/uninstalls launchd agents.
+/// @unchecked Sendable required because DispatchSourceTimer is not Sendable,
+/// but all mutable state is accessed from the serial queue.
 public final class ScanScheduler: @unchecked Sendable {
     public static let shared = ScanScheduler()
     public private(set) var isScheduled = false

@@ -132,19 +132,11 @@ public struct ContentView: View {
         }
     }
 
-    private func tagColor(_ hex: String) -> Color {
-        guard hex.hasPrefix("#"), let val = Int(hex.dropFirst(), radix: 16) else { return .gray }
-        let r = Double((val >> 16) & 0xFF) / 255
-        let g = Double((val >> 8) & 0xFF) / 255
-        let b = Double(val & 0xFF) / 255
-        return Color(.sRGB, red: r, green: g, blue: b, opacity: 1)
-    }
-
     private var searchBar: some View {
         HStack {
             Image(systemName: "magnifyingglass")
                 .foregroundStyle(.secondary)
-            TextField("Filter by IP or hostname…", text: $viewModel.searchText)
+            TextField("Filter by IP or hostname\u{2026}", text: $viewModel.searchText)
                 .textFieldStyle(.plain)
                 .font(.subheadline)
             if !viewModel.searchText.isEmpty {
@@ -372,7 +364,7 @@ public struct ContentView: View {
                                 VStack(alignment: .leading, spacing: 2) {
                                     Text(summary.timestamp.formatted(date: .abbreviated, time: .shortened))
                                         .font(.body)
-                                    Text("\(summary.deviceCount) devices · \(summary.totalVulnerabilities) vulns · \(String(format: "%.1f", summary.riskScore)) risk")
+                                    Text("\(summary.deviceCount) devices \u{00B7} \(summary.totalVulnerabilities) vulns \u{00B7} \(String(format: "%.1f", summary.riskScore)) risk")
                                         .font(.caption).foregroundStyle(.secondary)
                                 }
                                 Spacer()
@@ -433,7 +425,7 @@ public struct ContentView: View {
                         HStack {
                             Text(cve.cve).font(.caption).bold()
                             Spacer()
-                            Text("× \(cve.count)").font(.caption).foregroundStyle(.secondary)
+                            Text("\u{00D7} \(cve.count)").font(.caption).foregroundStyle(.secondary)
                         }
                         .padding(.vertical, 2)
                     }
@@ -540,7 +532,7 @@ public struct ContentView: View {
         VStack(alignment: .leading, spacing: 8) {
             let tcpOpen = device.ports.filter { $0.state == .open && $0.transport == .tcp }.count
             let udpOpen = device.ports.filter { $0.state == .open && $0.transport == .udp }.count
-            Text("Open Ports (\(tcpOpen + udpOpen) — TCP:\(tcpOpen) UDP:\(udpOpen))")
+            Text("Open Ports (\(tcpOpen + udpOpen) \u{2014} TCP:\(tcpOpen) UDP:\(udpOpen))")
                 .font(.headline)
 
             if device.ports.isEmpty {
@@ -562,9 +554,9 @@ public struct ContentView: View {
                             .font(.caption).foregroundStyle(.secondary)
                     }
                     TableColumn("State") { port in Text(port.state.rawValue.capitalized) }
-                    TableColumn("Service") { port in Text(port.service ?? "-") }
+                    TableColumn("Service") { port in Text(port.service ?? "\u{2013}") }
                     TableColumn("Banner") { port in
-                        Text(port.banner ?? "-").lineLimit(1).truncationMode(.tail)
+                        Text(port.banner ?? "\u{2013}").lineLimit(1).truncationMode(.tail)
                     }
                 }
                 .tableStyle(.bordered)
@@ -609,7 +601,7 @@ public struct ContentView: View {
                     Button(action: { viewModel.startScan() }) {
                         Label("Start Scan", systemImage: "play.fill")
                     }
-                    .help("Start Scan (⌘R)")
+                    .help("Start Scan (\u{2318}R)")
                     .accessibilityLabel("Start network scan")
                 }
 
@@ -638,7 +630,7 @@ public struct ContentView: View {
                 Button(action: { viewModel.showConfig = true }) {
                     Label("Configure", systemImage: "gearshape")
                 }
-                .help("Scan Settings (⌘,)")
+                .help("Scan Settings (\u{2318},)")
                 .accessibilityLabel("Open scan settings")
 
                 Menu {
@@ -721,10 +713,6 @@ public struct ContentView: View {
         }
     }
 
-    private func riskColor(_ score: Double) -> Color {
-        switch score { case 7...: .red case 4...: .orange case 1...: .yellow default: .green }
-    }
-
     private func riskBadge(score: Double) -> some View {
         Text(String(format: "%.1f", score))
             .font(.caption).bold()
@@ -768,483 +756,6 @@ public struct ContentView: View {
             }
         }
         .frame(width: 500, height: 520)
-    }
-}
-
-// MARK: - Supporting Views
-private struct DeviceRow: View {
-    let device: Device
-    let tags: [Tag]
-
-    var body: some View {
-        HStack(spacing: 8) {
-            Circle().fill(riskColor(device.riskScore)).frame(width: 8, height: 8)
-            VStack(alignment: .leading, spacing: 2) {
-                Text(device.host ?? device.ip).font(.body).lineLimit(1)
-                Text(device.ip).font(.caption).foregroundStyle(.secondary)
-                if !tags.isEmpty {
-                    HStack(spacing: 3) {
-                        ForEach(tags.prefix(3)) { tag in
-                            Text(tag.name).font(.system(size: 7)).bold()
-                                .padding(.horizontal, 4).padding(.vertical, 1)
-                                .background(tagColor(tag.color).opacity(0.2))
-                                .foregroundStyle(tagColor(tag.color))
-                                .clipShape(.rect(cornerRadius: 3))
-                        }
-                        if tags.count > 3 {
-                            Text("+\(tags.count - 3)").font(.system(size: 7)).foregroundStyle(.secondary)
-                        }
-                    }
-                }
-            }
-            Spacer()
-            HStack(spacing: 4) {
-                if !device.vulnerabilities.isEmpty {
-                    let critical = device.vulnerabilities.filter { $0.severity >= 9 }.count
-                    let high = device.vulnerabilities.filter { $0.severity >= 7 && $0.severity < 9 }.count
-                    if critical > 0 {
-                        Text("\(critical)").font(.caption2).bold().foregroundStyle(.white)
-                            .padding(.horizontal, 5).padding(.vertical, 1)
-                            .background(Color.red).clipShape(.capsule)
-                    }
-                    if high > 0 {
-                        Text("\(high)").font(.caption2).bold().foregroundStyle(.white)
-                            .padding(.horizontal, 5).padding(.vertical, 1)
-                            .background(Color.orange).clipShape(.capsule)
-                    }
-                }
-                Text(String(format: "%.1f", device.riskScore))
-                    .font(.caption2).bold().foregroundStyle(riskColor(device.riskScore))
-            }
-        }
-        .padding(.vertical, 4)
-    }
-
-    private func riskColor(_ score: Double) -> Color {
-        switch score { case 7...: .red case 4...: .orange case 1...: .yellow default: .green }
-    }
-
-    private func tagColor(_ hex: String) -> Color {
-        guard hex.hasPrefix("#"), let val = Int(hex.dropFirst(), radix: 16) else { return .gray }
-        let r = Double((val >> 16) & 0xFF) / 255
-        let g = Double((val >> 8) & 0xFF) / 255
-        let b = Double(val & 0xFF) / 255
-        return Color(.sRGB, red: r, green: g, blue: b, opacity: 1)
-    }
-}
-
-private struct VulnRow: View {
-    let vuln: Vuln
-
-    var body: some View {
-        HStack(alignment: .top, spacing: 8) {
-            severityBadge(score: vuln.severity)
-            VStack(alignment: .leading, spacing: 2) {
-                HStack(spacing: 4) {
-                    Text(vuln.id).font(.caption).foregroundStyle(.secondary)
-                    if let cve = vuln.cve {
-                        Text(cve).font(.caption2).foregroundStyle(.blue)
-                            .padding(.horizontal, 4).background(Color.blue.opacity(0.1)).clipShape(.rect(cornerRadius: 3))
-                    }
-                }
-                Text(vuln.description).font(.body)
-
-                if !vuln.compliance.isEmpty {
-                    HStack(spacing: 4) {
-                        ForEach(vuln.compliance, id: \.self) { fw in
-                            Text(fw.rawValue).font(.system(size: 7)).bold()
-                                .padding(.horizontal, 4).padding(.vertical, 1)
-                                .background(frameworkColor(fw).opacity(0.15))
-                                .foregroundStyle(frameworkColor(fw))
-                                .clipShape(.rect(cornerRadius: 3))
-                        }
-                    }
-                }
-
-                if let rec = vuln.recommendation {
-                    Label(rec, systemImage: "lightbulb").font(.caption).foregroundStyle(.blue)
-                }
-            }
-        }
-        .padding(10)
-        .background(Color(nsColor: .windowBackgroundColor))
-        .clipShape(.rect(cornerRadius: 8))
-    }
-
-    private func frameworkColor(_ fw: ComplianceFramework) -> Color {
-        switch fw {
-        case .pciDSS: return .red
-        case .hipaa: return .blue
-        case .gdpr: return .purple
-        case .soc2: return .green
-        case .nist: return .orange
-        }
-    }
-
-    private func severityBadge(score: Double) -> some View {
-        let level = SeverityLevel.from(score: score)
-        let color: Color = switch level {
-        case .critical: .red case .high: .orange case .medium: .yellow case .low: .blue case .info: .gray
-        }
-        return VStack(spacing: 1) {
-            Text(level.rawValue.prefix(1)).font(.caption).bold()
-            Text(String(format: "%.1f", score)).font(.system(size: 8))
-        }
-        .foregroundStyle(.white)
-        .frame(width: 28, height: 28)
-        .background(color)
-        .clipShape(.circle)
-    }
-}
-
-private struct StatCard: View {
-    let title: String
-    let value: String
-    let icon: String
-    let color: Color
-    var compact: Bool = false
-
-    var body: some View {
-        HStack(spacing: 12) {
-            Image(systemName: icon).font(.title3).foregroundStyle(color).frame(width: 24)
-            VStack(alignment: .leading, spacing: 2) {
-                Text(value).font(.title2).bold()
-                Text(title).font(.caption).foregroundStyle(.secondary)
-            }
-        }
-        .padding()
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Color(nsColor: .windowBackgroundColor))
-        .clipShape(.rect(cornerRadius: 10))
-        .overlay(RoundedRectangle(cornerRadius: 10).stroke(color.opacity(0.2), lineWidth: 1))
-    }
-}
-
-// MARK: - Config Sheet
-private struct ConfigSheet: View {
-    @Binding var config: ScanConfig
-    let viewModel: ScannerViewModel
-    @Environment(\.dismiss) private var dismiss
-    @State private var portFrom: Int
-    @State private var portTo: Int
-    @State private var udpFrom: Int
-    @State private var udpTo: Int
-    @State private var timeout: Double
-    @State private var maxConcurrency: Int
-    @State private var excludeText: String
-    @State private var serviceDetection: Bool
-    @State private var osDetection: Bool
-    @State private var scanUDP: Bool
-    @State private var webhookURL: String
-    @State private var webhookEnabled: Bool
-    @State private var subnetCIDR: String
-    @State private var scheduleEnabled: Bool
-    @State private var scheduleIntervalHours: Double
-    @State private var apiEnabled: Bool
-    @State private var apiPort: String
-    @State private var autoUpdateRules: Bool
-    @State private var rulesURL: String
-
-    init(config: Binding<ScanConfig>, viewModel: ScannerViewModel) {
-        _config = config
-        self.viewModel = viewModel
-        _portFrom = State(initialValue: config.wrappedValue.portRange.lowerBound)
-        _portTo = State(initialValue: config.wrappedValue.portRange.upperBound)
-        _udpFrom = State(initialValue: config.wrappedValue.udpPortRange.lowerBound)
-        _udpTo = State(initialValue: config.wrappedValue.udpPortRange.upperBound)
-        _timeout = State(initialValue: config.wrappedValue.timeout)
-        _maxConcurrency = State(initialValue: config.wrappedValue.maxConcurrency)
-        _excludeText = State(initialValue: config.wrappedValue.excludeIPs.joined(separator: ", "))
-        _serviceDetection = State(initialValue: config.wrappedValue.serviceDetection)
-        _osDetection = State(initialValue: config.wrappedValue.osDetection)
-        _scanUDP = State(initialValue: config.wrappedValue.scanUDP)
-        _webhookURL = State(initialValue: config.wrappedValue.webhookURL)
-        _webhookEnabled = State(initialValue: config.wrappedValue.webhookEnabled)
-        _subnetCIDR = State(initialValue: config.wrappedValue.subnetCIDR ?? "")
-        _scheduleEnabled = State(initialValue: config.wrappedValue.scheduleEnabled)
-        _scheduleIntervalHours = State(initialValue: config.wrappedValue.scheduleIntervalHours)
-        _apiEnabled = State(initialValue: config.wrappedValue.apiEnabled)
-        _apiPort = State(initialValue: String(config.wrappedValue.apiPort))
-        _autoUpdateRules = State(initialValue: config.wrappedValue.autoUpdateRules)
-        _rulesURL = State(initialValue: config.wrappedValue.rulesURL)
-    }
-
-    var body: some View {
-        TabView {
-            scanSettingsTab
-                .tabItem { Label("Scan", systemImage: "gearshape.2") }
-
-            networkTab
-                .tabItem { Label("Network", systemImage: "network") }
-
-            alertsTab
-                .tabItem { Label("Alerts", systemImage: "bell") }
-
-            scheduleTab
-                .tabItem { Label("Schedule", systemImage: "clock.arrow.circlepath") }
-
-            apiTab
-                .tabItem { Label("API", systemImage: "globe") }
-        }
-        .frame(width: 460, height: 520)
-        .padding()
-    }
-
-    private var scanSettingsTab: some View {
-        Form {
-            Section("Port Range (TCP)") {
-                HStack {
-                    Text("From:").frame(width: 50, alignment: .trailing)
-                    TextField("", value: $portFrom, formatter: NumberFormatter()).frame(width: 80)
-                    Text("To:")
-                    TextField("", value: $portTo, formatter: NumberFormatter()).frame(width: 80)
-                }
-            }
-
-            Section("Timing") {
-                HStack {
-                    Text("Timeout (s):").frame(width: 100, alignment: .trailing)
-                    TextField("", value: $timeout, formatter: NumberFormatter()).frame(width: 80)
-                }
-                HStack {
-                    Text("Concurrency:").frame(width: 100, alignment: .trailing)
-                    TextField("", value: $maxConcurrency, formatter: NumberFormatter()).frame(width: 80)
-                }
-            }
-
-            Section("Options") {
-                Toggle("Service detection", isOn: $serviceDetection)
-                Toggle("OS detection", isOn: $osDetection)
-            }
-
-            Section("Exclusions") {
-                TextField("Exclude IPs (comma-separated)", text: $excludeText)
-            }
-
-            Section("Rules Auto-Update") {
-                Toggle("Auto-update rules on scan", isOn: $autoUpdateRules)
-
-                TextField("Rules JSON URL", text: $rulesURL)
-                    .font(.caption)
-                    .textFieldStyle(.roundedBorder)
-
-                if !rulesURL.isEmpty {
-                    let version = RuleUpdater.cachedVersion.map { "v\($0)" } ?? "bundled"
-                    let lastUpdate = RuleUpdater.lastUpdateDate.map { "Last: \($0.formatted(date: .abbreviated, time: .shortened))" } ?? "Not cached"
-                    HStack(spacing: 8) {
-                        Circle().fill(RuleUpdater.isCacheStale() ? Color.orange : Color.green).frame(width: 6, height: 6)
-                        Text("\(version) — \(lastUpdate)").font(.caption).foregroundStyle(.secondary)
-                    }
-                }
-            }
-
-            HStack {
-                Button("Reset Defaults") { applyDefaults() }
-                Spacer()
-                Button("Done") { saveAndDismiss() }
-                    .buttonStyle(.borderedProminent)
-            }
-        }
-        .formStyle(.grouped)
-    }
-
-    private var networkTab: some View {
-        Form {
-            Section("Subnet") {
-                TextField("CIDR (e.g. 10.0.0.0/24, leave empty for auto)", text: $subnetCIDR)
-            }
-
-            Section("UDP Scan") {
-                Toggle("Enable UDP scan", isOn: $scanUDP)
-                    .disabled(true)
-                Text("UDP scanning slows scans significantly. ⚠️ Experimental.")
-                    .font(.caption).foregroundStyle(.secondary)
-
-                if scanUDP {
-                    HStack {
-                        Text("From:").frame(width: 50, alignment: .trailing)
-                        TextField("", value: $udpFrom, formatter: NumberFormatter()).frame(width: 80)
-                        Text("To:")
-                        TextField("", value: $udpTo, formatter: NumberFormatter()).frame(width: 80)
-                    }
-                }
-            }
-
-            HStack {
-                Button("Reset Defaults") { applyDefaults() }
-                Spacer()
-                Button("Done") { saveAndDismiss() }
-                    .buttonStyle(.borderedProminent)
-            }
-        }
-        .formStyle(.grouped)
-    }
-
-    private var alertsTab: some View {
-        Form {
-            Section("Webhook Alerts") {
-                Toggle("Send webhook on scan complete", isOn: $webhookEnabled)
-
-                TextField("Webhook URL", text: $webhookURL)
-                    .textFieldStyle(.roundedBorder)
-                    .disabled(!webhookEnabled)
-
-                Text("Supported: Slack, Discord, or any JSON webhook").font(.caption).foregroundStyle(.secondary)
-
-                if webhookEnabled && !webhookURL.isEmpty {
-                    HStack {
-                        Image(systemName: "checkmark.circle.fill").foregroundStyle(.green)
-                        Text("Webhook configured").font(.caption)
-                    }
-                }
-            }
-
-            Section("Alert Triggers") {
-                Text("Alerts are sent when a scan completes.")
-                    .font(.caption).foregroundStyle(.secondary)
-                Text("Payload includes device count, open ports, vulnerability summary, and risk score.")
-                    .font(.caption).foregroundStyle(.secondary)
-            }
-
-            HStack {
-                Button("Reset Defaults") { applyDefaults() }
-                Spacer()
-                Button("Done") { saveAndDismiss() }
-                    .buttonStyle(.borderedProminent)
-            }
-        }
-        .formStyle(.grouped)
-    }
-
-    private var scheduleTab: some View {
-        Form {
-            Section("Scheduled Scans") {
-                Toggle("Enable scheduled scanning", isOn: $scheduleEnabled)
-
-                if scheduleEnabled {
-                    HStack {
-                        Text("Interval (hours):").frame(width: 120, alignment: .trailing)
-                        TextField("", value: $scheduleIntervalHours, formatter: NumberFormatter())
-                            .frame(width: 80)
-                        Stepper("", value: $scheduleIntervalHours, in: 1...168, step: 1)
-                    }
-
-                    Text("Scans will run every \(Int(scheduleIntervalHours)) hour(s) while the app is open.")
-                        .font(.caption).foregroundStyle(.secondary)
-
-                    if scheduleEnabled {
-                        HStack {
-                            Image(systemName: "checkmark.circle.fill").foregroundStyle(.green)
-                            Text("Next scan: \(nextScanText)")
-                                .font(.caption)
-                        }
-                    }
-                }
-            }
-
-            Section("Launch Agent (Background)") {
-                Text("Install a launchd agent to run scans even when the app is closed.")
-                    .font(.caption).foregroundStyle(.secondary)
-
-                HStack(spacing: 12) {
-                    Button("Install Launch Agent") {
-                        if ScanScheduler.installLaunchAgent(path: Bundle.main.executablePath ?? "", intervalSeconds: Int(scheduleIntervalHours * 3600)) {
-                            viewModel.statusMessage = "Launch agent installed"
-                        } else {
-                            viewModel.errorMessage = "Failed to install launch agent"
-                        }
-                    }
-                    Button("Remove Launch Agent") {
-                        _ = ScanScheduler.uninstallLaunchAgent()
-                        viewModel.statusMessage = "Launch agent removed"
-                    }
-                }
-            }
-
-            HStack {
-                Button("Reset Defaults") { applyDefaults() }
-                Spacer()
-                Button("Done") { saveAndDismiss() }
-                    .buttonStyle(.borderedProminent)
-            }
-        }
-        .formStyle(.grouped)
-    }
-
-    // MARK: - API Tab
-    private var apiTab: some View {
-        Form {
-            Section("REST API") {
-                Toggle("Enable REST API", isOn: $apiEnabled)
-
-                if apiEnabled {
-                    HStack {
-                        Text("Port:").frame(width: 50, alignment: .trailing)
-                        TextField("8080", text: $apiPort)
-                            .frame(width: 80)
-                    }
-
-                    let status = RESTServer.shared.isRunning
-                    HStack(spacing: 8) {
-                        Circle().fill(status ? Color.green : Color.gray).frame(width: 8, height: 8)
-                        Text(status ? "Running on port \(apiPort)" : "Stopped")
-                            .font(.caption)
-                    }
-
-                    Text("Endpoints: /api/v1/devices, /api/v1/scans, /api/v1/health, /api/v1/export/csv, POST /api/v1/scans")
-                        .font(.caption).foregroundStyle(.secondary)
-                }
-            }
-
-            HStack {
-                Button("Reset Defaults") { applyDefaults() }
-                Spacer()
-                Button("Done") { saveAndDismiss() }
-                    .buttonStyle(.borderedProminent)
-            }
-        }
-        .formStyle(.grouped)
-    }
-
-    private var nextScanText: String {
-        guard scheduleEnabled, let next = ScanScheduler.shared.nextScanAt else { return "—" }
-        let formatter = RelativeDateTimeFormatter()
-        formatter.unitsStyle = .full
-        return formatter.localizedString(for: next, relativeTo: Date())
-    }
-
-    private func applyDefaults() {
-        let d = ScanConfig.default
-        portFrom = d.portRange.lowerBound; portTo = d.portRange.upperBound
-        udpFrom = d.udpPortRange.lowerBound; udpTo = d.udpPortRange.upperBound
-        timeout = d.timeout; maxConcurrency = d.maxConcurrency
-        excludeText = ""; serviceDetection = d.serviceDetection; osDetection = d.osDetection
-        scanUDP = d.scanUDP; webhookURL = d.webhookURL; webhookEnabled = d.webhookEnabled
-        subnetCIDR = d.subnetCIDR ?? ""
-        scheduleEnabled = d.scheduleEnabled; scheduleIntervalHours = d.scheduleIntervalHours
-        apiEnabled = d.apiEnabled; apiPort = String(d.apiPort)
-        autoUpdateRules = d.autoUpdateRules; rulesURL = d.rulesURL
-    }
-
-    private func saveAndDismiss() {
-        config.portRange = portFrom...portTo
-        config.udpPortRange = udpFrom...udpTo
-        config.timeout = timeout
-        config.maxConcurrency = maxConcurrency
-        config.excludeIPs = excludeText.split(separator: ",").map(String.init).map { $0.trimmingCharacters(in: .whitespaces) }
-        config.serviceDetection = serviceDetection
-        config.osDetection = osDetection
-        config.scanUDP = scanUDP
-        config.webhookURL = webhookURL
-        config.webhookEnabled = webhookEnabled
-        config.subnetCIDR = subnetCIDR.isEmpty ? nil : subnetCIDR
-        config.scheduleEnabled = scheduleEnabled
-        config.scheduleIntervalHours = scheduleIntervalHours
-        viewModel.updateSchedule(enabled: scheduleEnabled, intervalHours: scheduleIntervalHours)
-        viewModel.updateAPI(enabled: apiEnabled, port: Int(apiPort) ?? 8080)
-        config.autoUpdateRules = autoUpdateRules
-        config.rulesURL = rulesURL
-        dismiss()
     }
 }
 

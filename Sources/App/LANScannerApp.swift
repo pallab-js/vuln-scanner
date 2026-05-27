@@ -147,18 +147,7 @@ enum CLIRunner {
     }
 
     private static func exportJSON(devices: [Device]) -> String {
-        struct ExportDevice: Codable {
-            let ip: String; let mac: String?; let host: String?; let os: String?
-            let riskScore: Double; let openPorts: [ExportPort]; let vulnerabilities: [ExportVuln]
-        }
-        struct ExportPort: Codable { let port: Int; let service: String?; let banner: String? }
-        struct ExportVuln: Codable { let id: String; let severity: Double; let description: String; let recommendation: String?; let cve: String? }
-
-        let out = devices.map { d in
-            ExportDevice(ip: d.ip, mac: d.mac, host: d.host, os: d.os, riskScore: d.riskScore,
-                openPorts: d.ports.filter { $0.state == .open }.map { ExportPort(port: $0.number, service: $0.service, banner: $0.banner) },
-                vulnerabilities: d.vulnerabilities.map { ExportVuln(id: $0.id, severity: $0.severity, description: $0.description, recommendation: $0.recommendation, cve: $0.cve) })
-        }
+        let out = devices.map(mapToExportDevice)
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
         guard let data = try? encoder.encode(out) else { return "[]" }

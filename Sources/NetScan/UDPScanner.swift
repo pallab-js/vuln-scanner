@@ -97,6 +97,8 @@ public struct UDPScanner: Sendable {
     }
 }
 
+/// Handles incoming UDP response packets to determine if a port is open.
+/// @unchecked Sendable is required for NIO channel handlers (always run on a single EL).
 private final class UDPResponseHandler: ChannelInboundHandler, @unchecked Sendable {
     typealias InboundIn = AddressedEnvelope<ByteBuffer>
     let promise: EventLoopPromise<Bool>

@@ -1,5 +1,8 @@
 import Foundation
 
+/// JSON file-based persistence for scan results and history index.
+/// @unchecked Sendable is safe because all mutable state is accessed via
+/// the file system (JSON reads/writes are inherently serialized).
 public final class ScanStore: @unchecked Sendable {
     public static let shared = ScanStore()
     private let fileManager = FileManager.default

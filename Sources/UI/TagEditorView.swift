@@ -77,11 +77,4 @@ struct TagEditorView: View {
         .frame(width: 340, height: 340)
     }
 
-    private func tagColor(_ hex: String) -> Color {
-        guard hex.hasPrefix("#"), let val = Int(hex.dropFirst(), radix: 16) else { return .gray }
-        let r = Double((val >> 16) & 0xFF) / 255
-        let g = Double((val >> 8) & 0xFF) / 255
-        let b = Double(val & 0xFF) / 255
-        return Color(.sRGB, red: r, green: g, blue: b, opacity: 1)
-    }
 }

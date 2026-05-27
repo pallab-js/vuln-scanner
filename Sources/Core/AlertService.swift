@@ -1,5 +1,23 @@
 import Foundation
 
+private struct WebhookPayload: Codable, Sendable {
+    let attachments: [WebhookAttachment]
+}
+
+private struct WebhookAttachment: Codable, Sendable {
+    let color: String
+    let title: String
+    let fields: [WebhookField]
+    let footer: String
+    let ts: Int
+}
+
+private struct WebhookField: Codable, Sendable {
+    let title: String
+    let value: String
+    let short: Bool
+}
+
 public struct AlertService: Sendable {
     private let session = URLSession.shared
 
@@ -14,24 +32,26 @@ public struct AlertService: Sendable {
 
         let color: String = criticalCount > 0 ? "danger" : highCount > 0 ? "warning" : "good"
 
-        let payload: [String: Any] = [
-            "attachments": [[
-                "color": color,
-                "title": "LAN Scanner — Scan Complete",
-                "fields": [
-                    ["title": "Devices", "value": "\(scanSummary.deviceCount)", "short": true],
-                    ["title": "Open Ports", "value": "\(scanSummary.totalOpenPorts)", "short": true],
-                    ["title": "Vulnerabilities", "value": "\(scanSummary.totalVulnerabilities)", "short": true],
-                    ["title": "Risk Score", "value": String(format: "%.1f", scanSummary.riskScore), "short": true],
-                    ["title": "Critical", "value": "\(criticalCount)", "short": true],
-                    ["title": "High", "value": "\(highCount)", "short": true],
-                ],
-                "footer": "LANScanner",
-                "ts": Int(scanSummary.timestamp.timeIntervalSince1970)
-            ]]
-        ]
+        let payload = WebhookPayload(
+            attachments: [
+                WebhookAttachment(
+                    color: color,
+                    title: "LAN Scanner \u{2014} Scan Complete",
+                    fields: [
+                        WebhookField(title: "Devices", value: "\(scanSummary.deviceCount)", short: true),
+                        WebhookField(title: "Open Ports", value: "\(scanSummary.totalOpenPorts)", short: true),
+                        WebhookField(title: "Vulnerabilities", value: "\(scanSummary.totalVulnerabilities)", short: true),
+                        WebhookField(title: "Risk Score", value: String(format: "%.1f", scanSummary.riskScore), short: true),
+                        WebhookField(title: "Critical", value: "\(criticalCount)", short: true),
+                        WebhookField(title: "High", value: "\(highCount)", short: true),
+                    ],
+                    footer: "LANScanner",
+                    ts: Int(scanSummary.timestamp.timeIntervalSince1970)
+                )
+            ]
+        )
 
-        guard let body = try? JSONSerialization.data(withJSONObject: payload, options: []) else { return }
+        guard let body = try? JSONEncoder().encode(payload) else { return }
 
         var request = URLRequest(url: url)
         request.httpMethod = "POST"

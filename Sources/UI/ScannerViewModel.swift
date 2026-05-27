@@ -71,6 +71,7 @@ public final class ScannerViewModel {
         }
         if config.apiEnabled {
             RESTServer.shared.port = config.apiPort
+            RESTServer.shared.apiKey = config.apiKey
             try? RESTServer.shared.start()
         }
     }
@@ -82,11 +83,13 @@ public final class ScannerViewModel {
         }
     }
 
-    public func updateAPI(enabled: Bool, port: Int) {
+    public func updateAPI(enabled: Bool, port: Int, apiKey: String = "") {
         config.apiEnabled = enabled
         config.apiPort = port
+        config.apiKey = apiKey
         if enabled {
             RESTServer.shared.port = port
+            RESTServer.shared.apiKey = apiKey
             do {
                 try RESTServer.shared.start()
                 statusMessage = "REST API running on port \(port)"
@@ -97,6 +100,7 @@ public final class ScannerViewModel {
             }
         } else {
             RESTServer.shared.stop()
+            RESTServer.shared.apiKey = ""
             statusMessage = "REST API stopped"
         }
         saveConfig()
@@ -358,40 +362,8 @@ public final class ScannerViewModel {
     }
 
     public func exportJSON() -> String {
-        struct ExportDevice: Codable {
-            let ip: String
-            let mac: String?
-            let host: String?
-            let os: String?
-            let riskScore: Double
-            let openPorts: [ExportPort]
-            let vulnerabilities: [ExportVuln]
-        }
-        struct ExportPort: Codable {
-            let port: Int
-            let service: String?
-            let banner: String?
-        }
-        struct ExportVuln: Codable {
-            let id: String
-            let severity: Double
-            let description: String
-            let recommendation: String?
-        }
-
         let sourceDevices = selectedHistoryScanID != nil ? historyDevices : devices
-        let exportDevices = sourceDevices.map { device -> ExportDevice in
-            ExportDevice(
-                ip: device.ip,
-                mac: device.mac,
-                host: device.host,
-                os: device.os,
-                riskScore: device.riskScore,
-                openPorts: device.ports.filter { $0.state == .open }.map { ExportPort(port: $0.number, service: $0.service, banner: $0.banner) },
-                vulnerabilities: device.vulnerabilities.map { ExportVuln(id: $0.id, severity: $0.severity, description: $0.description, recommendation: $0.recommendation) }
-            )
-        }
-
+        let exportDevices = sourceDevices.map(mapToExportDevice)
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
         if let data = try? encoder.encode(exportDevices) {
