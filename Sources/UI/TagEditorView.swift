@@ -76,7 +76,7 @@ struct TagEditorView: View {
                             }
                             .padding(.horizontal, 8).padding(.vertical, 4)
                             .background(Color(nsColor: .controlBackgroundColor))
-                            .clipShape(.rect(cornerRadius: 6))
+                            .clipShape(RoundedRectangle(cornerRadius: 6))
                         }
                     }
                 }

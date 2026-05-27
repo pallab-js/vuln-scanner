@@ -6,45 +6,45 @@ struct DeviceRow: View {
     let tags: [Tag]
 
     var body: some View {
-        HStack(spacing: 8) {
-            HStack(spacing: 4) {
-                Circle().fill(riskColor(device.riskScore)).frame(width: 8, height: 8)
-                Text(riskLabel(device.riskScore))
-                    .font(.system(size: 7)).bold()
-                    .foregroundStyle(riskColor(device.riskScore))
-                    .frame(width: 40, alignment: .leading)
-            }
-            VStack(alignment: .leading, spacing: 2) {
+        HStack(spacing: 6) {
+            Circle().fill(riskColor(device.riskScore)).frame(width: 8, height: 8)
+            VStack(alignment: .leading, spacing: 1) {
                 Text(device.host ?? device.ip).font(.body).lineLimit(1)
-                Text(device.ip).font(.caption).foregroundStyle(.secondary)
+                HStack(spacing: 4) {
+                    Text(device.ip).font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                    if let label = riskLabel(device.riskScore) as String? {
+                        Text(label).font(.system(size: 7)).bold()
+                            .foregroundStyle(riskColor(device.riskScore))
+                    }
+                }
                 if !tags.isEmpty {
                     HStack(spacing: 3) {
-                        ForEach(tags.prefix(3)) { tag in
+                        ForEach(tags.prefix(2)) { tag in
                             Text(tag.name).font(.system(size: 7)).bold()
                                 .padding(.horizontal, 4).padding(.vertical, 1)
                                 .background(tagColor(tag.color).opacity(0.2))
                                 .foregroundStyle(tagColor(tag.color))
-                                .clipShape(.rect(cornerRadius: 3))
+                                .clipShape(RoundedRectangle(cornerRadius: 3))
                         }
-                        if tags.count > 3 {
-                            Text("+\(tags.count - 3)").font(.system(size: 7)).foregroundStyle(.secondary)
+                        if tags.count > 2 {
+                            Text("+\(tags.count - 2)").font(.system(size: 7)).foregroundStyle(.secondary)
                         }
                     }
                 }
             }
-            Spacer()
-            HStack(spacing: 4) {
+            Spacer(minLength: 4)
+            HStack(spacing: 3) {
                 if !device.vulnerabilities.isEmpty {
                     let critical = device.vulnerabilities.filter { $0.severity >= 9 }.count
                     let high = device.vulnerabilities.filter { $0.severity >= 7 && $0.severity < 9 }.count
                     if critical > 0 {
                         Text("\(critical)").font(.caption2).bold().foregroundStyle(.white)
-                            .padding(.horizontal, 5).padding(.vertical, 1)
+                            .padding(.horizontal, 4).padding(.vertical, 1)
                             .background(Color.red).clipShape(.capsule)
                     }
                     if high > 0 {
                         Text("\(high)").font(.caption2).bold().foregroundStyle(.white)
-                            .padding(.horizontal, 5).padding(.vertical, 1)
+                            .padding(.horizontal, 4).padding(.vertical, 1)
                             .background(Color.orange).clipShape(.capsule)
                     }
                 }
@@ -52,7 +52,7 @@ struct DeviceRow: View {
                     .font(.caption2).bold().foregroundStyle(riskColor(device.riskScore))
             }
         }
-        .padding(.vertical, 4)
+        .padding(.vertical, 3)
     }
 }
 
@@ -67,7 +67,7 @@ struct VulnRow: View {
                     Text(vuln.id).font(.caption).foregroundStyle(.secondary)
                     if let cve = vuln.cve {
                         Text(cve).font(.caption2).foregroundStyle(.blue)
-                            .padding(.horizontal, 4).background(Color.blue.opacity(0.1)).clipShape(.rect(cornerRadius: 3))
+                            .padding(.horizontal, 4).background(Color.blue.opacity(0.1)).clipShape(RoundedRectangle(cornerRadius: 3))
                     }
                 }
                 Text(vuln.description).font(.body)
@@ -79,7 +79,7 @@ struct VulnRow: View {
                                 .padding(.horizontal, 4).padding(.vertical, 1)
                                 .background(frameworkColor(fw).opacity(0.15))
                                 .foregroundStyle(frameworkColor(fw))
-                                .clipShape(.rect(cornerRadius: 3))
+                                .clipShape(RoundedRectangle(cornerRadius: 3))
                         }
                     }
                 }
@@ -91,7 +91,7 @@ struct VulnRow: View {
         }
         .padding(10)
         .background(Color(nsColor: .windowBackgroundColor))
-        .clipShape(.rect(cornerRadius: 8))
+        .clipShape(RoundedRectangle(cornerRadius: 8))
     }
 
     private func severityBadge(score: Double) -> some View {
@@ -128,7 +128,7 @@ struct StatCard: View {
         .padding()
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(Color(nsColor: .windowBackgroundColor))
-        .clipShape(.rect(cornerRadius: 10))
+        .clipShape(RoundedRectangle(cornerRadius: 10))
         .overlay(RoundedRectangle(cornerRadius: 10).stroke(color.opacity(0.2), lineWidth: 1))
     }
 }

@@ -1,5 +1,6 @@
 import Foundation
 import Observation
+import SwiftUI
 import Core
 import NetScan
 import Engine
@@ -11,7 +12,7 @@ public final class ScannerViewModel {
     public var devices: [Device] = []
     public var isScanning = false
     public var progress: Double = 0
-    public var statusMessage = "Ready"
+    public var statusMessage = ""
     public var scanDuration: TimeInterval = 0
     public var errorMessage: String?
     public var selectedDevice: Device?
@@ -38,9 +39,49 @@ public final class ScannerViewModel {
     public var rulesUpdateError: String?
     public var showRulesUpdateConfig = false
 
+    // Tier 2 enhancements
+    public var selectedSeverityFilter: SeverityLevel? = nil
+    public var showCompareView = false
+    public var compareBaseline: [Device] = []
+    public var toastMessage: String?
+    public var toastIcon = "checkmark.circle.fill"
+    public var toastColor: Color = .green
+    public var isShowingToast = false
+    public var showExportPreview = false
+    public var exportPreviewContent = ""
+    public var exportPreviewFormat = ""
+    public var exportSaveAction: (() -> Void)?
+    public var historyLoadCount = 10
+    public var multiSelectedIPs: Set<String> = []
+
+    // Tier 3 additions
+    public var isAuthenticated = false
+    public var needsAuth = false
+    public var userRole: UserRole = .admin
+    public var showAuditLog = false
+    public var showProfiles = false
+    public var selectedProfile: String?
+    public var retentionPolicy = RetentionManager.shared.policy
+    public var deliveryConfig = ReportDelivery.shared.config
+    public var siemConfig = SIEMConfig.default
+
+    // scan source tracking
+    public var scanSource: ScanSource = .current
+
+    public enum ScanSource: String, CaseIterable {
+        case current = "Live"
+        case history = "History"
+    }
+
     public var complianceSummary: String {
-        guard !activeComplianceFilters.isEmpty else { return "All" }
+        guard !activeComplianceFilters.isEmpty else { return "All frameworks" }
         return activeComplianceFilters.map(\.rawValue).sorted().joined(separator: ", ")
+    }
+
+    public var isViewingHistory: Bool { scanSource == .history && selectedHistoryScanID != nil }
+
+    public var sourceDevices: [Device] {
+        isViewingHistory ? historyDevices : devices
     }
 
     public func vulnsMatchingCompliance(_ vulns: [Vuln]) -> [Vuln] {
@@ -48,14 +89,9 @@ public final class ScannerViewModel {
         return vulns.filter { !Set($0.compliance).isDisjoint(with: activeComplianceFilters) }
     }
 
-    private let discovery = NetworkDiscovery()
-    private let portScanner = PortScanner()
-    private let vulnMapper = VulnMapper()
-    private let osFingerprinter = OSFingerprinter()
-    private let udpScanner = UDPScanner()
+    private let orchestrator = ScanOrchestrator()
     private let scanStore = ScanStore.shared
     private let alertService = AlertService()
-    private var scanTask: Task<Void, Never>?
 
     public init() {
         Logger.ui.notice("ScannerViewModel initialized")
@@ -63,6 +99,10 @@ public final class ScannerViewModel {
         deviceTags = TagStore.shared.load()
         rulesVersion = RuleLoader.currentVersion
         loadHistory()
+        if RetentionManager.shared.policy.autoPurgeOnLaunch {
+            RetentionManager.shared.enforce(on: scanStore)
+            loadHistory()
+        }
         ScanScheduler.shared.configure { [weak self] in
             await self?.startScan()
         }
@@ -93,6 +133,7 @@ public final class ScannerViewModel {
             do {
                 try RESTServer.shared.start()
                 statusMessage = "REST API running on port \(port)"
+                AuditLogger.shared.log(action: .apiStarted, detail: "API started on port \(port)", category: .configuration)
             } catch {
                 errorMessage = "Failed to start API: \(error.localizedDescription)"
                 statusMessage = "API failed to start"
@@ -102,6 +143,7 @@ public final class ScannerViewModel {
             RESTServer.shared.stop()
             RESTServer.shared.apiKey = ""
             statusMessage = "REST API stopped"
+            AuditLogger.shared.log(action: .apiStopped, detail: "API stopped", category: .configuration)
         }
         saveConfig()
     }
@@ -129,26 +171,89 @@ public final class ScannerViewModel {
         }
     }
 
-    public var filteredDevices: [Device] {
-        guard !searchText.isEmpty else { return devices }
-        return devices.filter {
-            $0.ip.localizedCaseInsensitiveContains(searchText) ||
-            ($0.host ?? "").localizedCaseInsensitiveContains(searchText)
+    // MARK: - Profile Management
+    public func applyProfile(_ name: String) {
+        guard let profileConfig = ProfileManager.shared.apply(name: name) else {
+            errorMessage = "Profile '\(name)' not found"
+            return
         }
+        config = profileConfig
+        statusMessage = "Applied profile: \(name)"
+        showToast(message: "Applied profile: \(name)")
+    }
+
+    public func saveProfile(name: String, description: String = "") {
+        ProfileManager.shared.save(name: name, config: config, description: description)
+        showToast(message: "Profile saved: \(name)")
+    }
+
+    // MARK: - Audit Log
+    public var auditEvents: [AuditEvent] { AuditLogger.shared.recent() }
+
+    public func exportAuditLog() -> String {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+        guard let data = try? encoder.encode(AuditLogger.shared.export()) else { return "[]" }
+        return String(data: data, encoding: .utf8) ?? "[]"
+    }
+
+    // MARK: - Filtering & Search
+    public var filteredDevices: [Device] {
+        var result = sourceDevices
+        if !searchText.isEmpty {
+            result = result.filter {
+                $0.ip.localizedCaseInsensitiveContains(searchText) ||
+                ($0.host ?? "").localizedCaseInsensitiveContains(searchText)
+            }
+        }
+        if let severity = selectedSeverityFilter {
+            result = result.filter { device in
+                device.vulnerabilities.contains { SeverityLevel.from(score: $0.severity) == severity }
+            }
+        }
+        return result
+    }
+
+    public var filteredDevicesWithTags: [Device] {
+        var result = filteredDevices
+        if let tagFilter {
+            result = result.filter { device in
+                deviceTags[device.ip]?.contains(where: { $0.name == tagFilter }) ?? false
+            }
+        }
+        return result
     }
 
     public var riskScore: Double {
-        devices.map(\.riskScore).max() ?? 0
+        sourceDevices.map(\.riskScore).max() ?? 0
     }
 
     public var totalOpenPorts: Int {
-        devices.reduce(0) { $0 + $1.ports.filter { $0.state == .open }.count }
+        sourceDevices.reduce(0) { $0 + $1.ports.filter { $0.state == .open }.count }
     }
 
     public var totalVulnerabilities: Int {
-        devices.reduce(0) { $0 + $1.vulnerabilities.count }
+        sourceDevices.reduce(0) { $0 + $1.vulnerabilities.count }
     }
 
+    // MARK: - Severity Filter from Chart
+    public func toggleSeverityFilter(_ level: SeverityLevel) {
+        if selectedSeverityFilter == level {
+            selectedSeverityFilter = nil
+        } else {
+            selectedSeverityFilter = level
+        }
+    }
+
+    // MARK: - Toast
+    public func showToast(message: String, icon: String = "checkmark.circle.fill", color: Color = .green) {
+        toastMessage = message
+        toastIcon = icon
+        toastColor = color
+        isShowingToast = true
+    }
+
+    // MARK: - Rules
     public func updateRules() {
         guard !isUpdatingRules else { return }
         let urlString = config.rulesURL
@@ -164,6 +269,7 @@ public final class ScannerViewModel {
                 _ = try await RuleUpdater.update(from: urlString)
                 rulesVersion = RuleLoader.currentVersion
                 statusMessage = "Rules updated to v\(rulesVersion)"
+                AuditLogger.shared.log(action: .rulesUpdated, detail: "Rules updated to v\(rulesVersion)", category: .configuration)
             } catch {
                 rulesUpdateError = error.localizedDescription
                 statusMessage = "Rules update failed"
@@ -173,124 +279,100 @@ public final class ScannerViewModel {
         }
     }
 
+    // MARK: - Scanning
     public func startScan() {
-        guard !isScanning else { return }
+        guard !orchestrator.isScanning else { return }
+        guard AuthManager.shared.requireRole(.operator_) else {
+            errorMessage = "Your role does not allow scanning"
+            return
+        }
+
         isScanning = true
-        progress = 0
-        statusMessage = "Starting scan..."
         errorMessage = nil
         devices = []
+        scanSource = .current
         selectedHistoryScanID = nil
         historyDevices = []
+        selectedSeverityFilter = nil
+        progress = 0
+        statusMessage = "Starting scan..."
+        peakMemoryMB = 0
 
-        scanTask = Task { [weak self] in
-            guard let self = self else { return }
-            if self.config.autoUpdateRules && !self.config.rulesURL.isEmpty {
-                self.statusMessage = "Updating vulnerability rules..."
-                do {
-                    _ = try await RuleUpdater.update(from: self.config.rulesURL)
-                    self.rulesVersion = RuleLoader.currentVersion
-                    Logger.ui.notice("Rules auto-updated to v\(self.rulesVersion)")
-                } catch {
-                    Logger.ui.notice("Rules auto-update failed: \(error.localizedDescription)")
-                }
-            }
-            let startTime = Date()
+        AuditLogger.shared.log(action: .scanStarted, detail: "Scan started: ports \(config.portRange), timeout \(config.timeout)s", category: .scanning)
 
-            do {
-                self.statusMessage = "Discovering network hosts..."
-                let discoveredDevices = try await self.discovery.scanSubnet(timeout: 30, cidrOverride: self.config.subnetCIDR)
-                self.progress = 0.2
+        orchestrator.startScan(
+            config: config,
+            customRules: customRules,
+            onRulesUpdate: { [weak self] status in
+                self?.statusMessage = status
+            },
+            onDiscovery: { [weak self] discovered in
+                self?.statusMessage = "\(discovered.count) hosts found, scanning ports..."
+            },
+            onDeviceProgress: { _, _, _ in },
+            onProgress: { [weak self] scannedDevices, progress, status in
+                self?.devices = scannedDevices
+                self?.progress = progress
+                self?.statusMessage = status
+            },
+            onMemory: { [weak self] current, peak in
+                self?.currentMemoryMB = current
+                self?.peakMemoryMB = peak
+            },
+            onCompletion: { [weak self] scannedDevices, duration, error in
+                guard let self = self else { return }
+                self.scanDuration = duration
+                self.isScanning = false
+                self.progress = 1.0
 
-                var scannedDevices: [Device] = []
-                let total = discoveredDevices.count
-
-                for (index, var device) in discoveredDevices.enumerated() {
-                    try Task.checkCancellation()
-                    self.statusMessage = "Scanning \(device.ip) (\(index + 1)/\(total))..."
-
-                    let tcpPorts = try await self.portScanner.scan(
-                        ip: device.ip,
-                        ports: Array(self.config.portRange),
-                        timeout: self.config.timeout
-                    )
-
-                    var allPorts = tcpPorts
-
-                    if self.config.scanUDP {
-                        let udpPorts = try await self.udpScanner.scan(
-                            ip: device.ip,
-                            ports: Array(self.config.udpPortRange),
-                            timeout: self.config.timeout
-                        )
-                        allPorts.append(contentsOf: udpPorts)
+                if let error = error {
+                    if error == "cancelled" {
+                        self.statusMessage = "Scan cancelled"
+                        AuditLogger.shared.log(action: .scanCancelled, detail: "Scan cancelled by user", category: .scanning)
+                    } else {
+                        self.errorMessage = error
+                        self.statusMessage = "Scan failed"
+                        AuditLogger.shared.log(action: .scanCompleted, detail: "Scan failed: \(error)", category: .scanning)
                     }
-
-                    let inferredOS = self.osFingerprinter.infer(ports: allPorts)
-                    let resolvedOS = device.os ?? inferredOS
-
-                    device = Device(
-                        ip: device.ip,
-                        mac: device.mac,
-                        host: device.host,
-                        os: resolvedOS,
-                        ports: allPorts
-                    )
-
-                    let vulns = self.vulnMapper.map(device: device, customRules: self.customRules)
-                    device = Device(
-                        ip: device.ip,
-                        mac: device.mac,
-                        host: device.host,
-                        os: resolvedOS,
-                        ports: allPorts,
-                        vulnerabilities: vulns
-                    )
-
-                    scannedDevices.append(device)
-                    self.devices = scannedDevices
-                    self.progress = 0.2 + (0.8 * Double(index + 1) / Double(max(total, 1)))
-                    self.currentMemoryMB = MemoryTracker.shared.currentRSSMB
-                    self.peakMemoryMB = max(self.peakMemoryMB, self.currentMemoryMB)
+                    return
                 }
 
-                self.scanDuration = Date().timeIntervalSince(startTime)
-                let result = ScanResult(devices: scannedDevices, scanDuration: self.scanDuration, totalPortsScanned: self.config.portRange.count)
-                _ = try? self.scanStore.save(scanResult: result, config: self.config, duration: self.scanDuration)
-                self.loadHistory()
+                let result = ScanResult(devices: scannedDevices, scanDuration: duration, totalPortsScanned: config.portRange.count)
+                _ = try? scanStore.save(scanResult: result, config: config, duration: duration)
+                loadHistory()
 
-                self.statusMessage = "Scan complete: \(scannedDevices.count) devices in \(String(format: "%.1f", self.scanDuration))s"
-                Logger.ui.notice("Scan completed: \(scannedDevices.count) devices, \(self.scanDuration)s")
+                statusMessage = "Scan complete: \(scannedDevices.count) devices in \(String(format: "%.1f", duration))s"
+                Logger.ui.notice("Scan completed: \(scannedDevices.count) devices, \(duration)s")
+                AuditLogger.shared.log(action: .scanCompleted, detail: "\(scannedDevices.count) devices, \(duration)s", category: .scanning)
 
-                if self.config.webhookEnabled {
+                if config.webhookEnabled {
                     let summary = ScanSummary(
                         timestamp: result.timestamp,
-                        duration: self.scanDuration,
+                        duration: duration,
                         deviceCount: scannedDevices.count,
-                        totalOpenPorts: self.totalOpenPorts,
-                        totalVulnerabilities: self.totalVulnerabilities,
-                        riskScore: self.riskScore,
-                        config: self.config
+                        totalOpenPorts: totalOpenPorts,
+                        totalVulnerabilities: totalVulnerabilities,
+                        riskScore: riskScore,
+                        config: config
                     )
                     Task {
-                        await self.alertService.sendScanComplete(scanSummary: summary, devices: scannedDevices, webhookURL: self.config.webhookURL)
+                        await alertService.sendScanComplete(scanSummary: summary, devices: scannedDevices, webhookURL: config.webhookURL)
                     }
                 }
-            } catch is CancellationError {
-                self.statusMessage = "Scan cancelled"
-                Logger.ui.notice("Scan cancelled by user")
-            } catch {
-                let networkError = NetworkError.from(error)
-                self.errorMessage = networkError.errorDescription
-                self.statusMessage = "Scan failed"
-                Logger.ui.error("Scan failed: \(networkError.localizedDescription)")
-            }
 
-            self.isScanning = false
-            self.progress = 1.0
-        }
+                if !ReportDelivery.shared.config.slackWebhook.isEmpty || ReportDelivery.shared.config.emailEnabled {
+                    let report = ReportGenerator().generateHTML(devices: scannedDevices, scanDuration: duration, timestamp: result.timestamp, config: config)
+                    Task {
+                        if let err = await ReportDelivery.shared.send(report: report, format: ReportDelivery.shared.config.format, title: "Scan Complete - \(Date().formatted())") {
+                            Logger.ui.error("Report delivery failed: \(err.localizedDescription)")
+                        }
+                    }
+                }
+            }
+        )
     }
 
+    // MARK: - Tags
     public func addTag(_ name: String, color: String, to ip: String) {
         let tag = Tag(name: name, color: color)
         TagStore.shared.addTag(tag, to: ip)
@@ -306,50 +388,91 @@ public final class ScannerViewModel {
         TagStore.shared.allTags()
     }
 
-    public var filteredDevicesWithTags: [Device] {
-        guard let tagFilter else { return filteredDevices }
-        return filteredDevices.filter { device in
-            deviceTags[device.ip]?.contains(where: { $0.name == tagFilter }) ?? false
-        }
-    }
-
     public func stopScan() {
-        scanTask?.cancel()
-        scanTask = nil
+        orchestrator.stopScan()
+        isScanning = false
         statusMessage = "Stopping..."
     }
 
     public func loadHistory() {
-        history = scanStore.loadHistory(limit: 50)
+        history = scanStore.loadHistory(limit: 200)
+        historyLoadCount = min(20, history.count)
         trends = scanStore.computeTrends()
+    }
+
+    public var isLoadingMoreHistory = false
+
+    public func loadMoreHistory() {
+        guard !isLoadingMoreHistory else { return }
+        isLoadingMoreHistory = true
+        historyLoadCount += 20
+        Task { try? await Task.sleep(for: .seconds(0.3)); isLoadingMoreHistory = false }
     }
 
     public func selectHistoryScan(scanID: String) {
         selectedHistoryScanID = scanID
+        scanSource = .history
         devices = []
         selectedDevice = nil
+        selectedSeverityFilter = nil
         if let loaded = try? scanStore.loadDevices(scanID: scanID) {
             historyDevices = loaded
         }
     }
 
+    public func switchToCurrentScan() {
+        scanSource = .current
+        selectedHistoryScanID = nil
+        historyDevices = []
+        selectedDevice = nil
+    }
+
     public func deleteHistoryScan(scanID: String) {
         try? scanStore.deleteScan(scanID: scanID)
+        AuditLogger.shared.log(action: .historyDeleted, detail: "Deleted scan \(scanID)", category: .dataManagement)
         if selectedHistoryScanID == scanID {
             selectedHistoryScanID = nil
+            scanSource = .current
             historyDevices = []
         }
         loadHistory()
     }
 
+    // MARK: - Comparison
+    public func prepareComparison() {
+        compareBaseline = sourceDevices
+        showCompareView = true
+    }
+
+    // MARK: - Multi-select
+    public func batchTag(ip: String, tagName: String, color: String) {
+        addTag(tagName, color: color, to: ip)
+    }
+
+    public func batchExportSelected() -> String {
+        let selected = sourceDevices.filter { multiSelectedIPs.contains($0.ip) }
+        let data = selected.map(mapToExportDevice)
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+        guard let json = try? encoder.encode(data) else { return "[]" }
+        return String(data: json, encoding: .utf8) ?? "[]"
+    }
+
+    // MARK: - Retention
+    public func applyRetentionPolicy() {
+        RetentionManager.shared.policy = retentionPolicy
+        RetentionManager.shared.enforce(on: scanStore)
+        loadHistory()
+        showToast(message: "Retention policy applied")
+    }
+
+    // MARK: - Export
     public func exportHTML() -> String {
-        let sourceDevices = selectedHistoryScanID != nil ? historyDevices : devices
         let generator = ReportGenerator()
         return generator.generateHTML(devices: sourceDevices, scanDuration: scanDuration, timestamp: Date(), config: config)
     }
 
     public func exportCSV() -> String {
-        let sourceDevices = selectedHistoryScanID != nil ? historyDevices : devices
         var csv = "IP,MAC,Hostname,OS,Risk Score,Open Ports,Vulnerabilities\n"
         for device in sourceDevices {
             let ports = device.ports.filter { $0.state == .open }.map { "\($0.number)/\($0.service ?? "")" }.joined(separator: ";")
@@ -360,7 +483,6 @@ public final class ScannerViewModel {
     }
 
     public func exportJSON() -> String {
-        let sourceDevices = selectedHistoryScanID != nil ? historyDevices : devices
         let exportDevices = sourceDevices.map(mapToExportDevice)
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
@@ -368,5 +490,16 @@ public final class ScannerViewModel {
             return String(data: data, encoding: .utf8) ?? "[]"
         }
         return "[]"
+    }
+
+    public func exportSIEM(format: SIEMFormat) -> String {
+        SIEMExporter.shared.export(devices: sourceDevices, format: format)
+    }
+
+    public func showExportPreview(_ content: String, format: String, saveAction: @escaping () -> Void) {
+        exportPreviewContent = content
+        exportPreviewFormat = format
+        exportSaveAction = saveAction
+        showExportPreview = true
     }
 }

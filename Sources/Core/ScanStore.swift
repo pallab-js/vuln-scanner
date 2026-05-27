@@ -132,6 +132,28 @@ public final class ScanStore: @unchecked Sendable {
         return result
     }
 
+    @discardableResult
+    public func deleteOlderThan(_ date: Date) -> Int {
+        guard let count = try? db.write({ db in
+            try db.execute(sql: "DELETE FROM scans WHERE timestamp < ?", arguments: [date])
+            return db.changesCount
+        }) else { return 0 }
+        return count
+    }
+
+    @discardableResult
+    public func trim(toMax maxCount: Int) -> Int {
+        guard let total = try? db.read({ db in
+            try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM scans") ?? 0
+        }), total > maxCount else { return 0 }
+        let excess = total - maxCount
+        guard let deleted = try? db.write({ db in
+            try db.execute(sql: "DELETE FROM scans WHERE scan_id IN (SELECT scan_id FROM scans ORDER BY timestamp ASC LIMIT ?)", arguments: [excess])
+            return db.changesCount
+        }) else { return 0 }
+        return deleted
+    }
+
     public func deleteScan(scanID: String) throws {
         try db.write { db in
             try db.execute(sql: "DELETE FROM scans WHERE scan_id = ?", arguments: [scanID])

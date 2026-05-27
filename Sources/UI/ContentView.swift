@@ -1,5 +1,6 @@
 import SwiftUI
 import Charts
+import UniformTypeIdentifiers
 import Core
 import API
 import Engine
@@ -7,12 +8,59 @@ import Engine
 public struct ContentView: View {
     @State private var viewModel = ScannerViewModel()
     @State private var showTopology = false
+    @State private var sidebarWidth: CGFloat = 280
+    @State private var showComplianceBar = false
+    @State private var vulnDisplayLimit = 100
 
     public init() {}
 
     public var body: some View {
+        Group {
+            if !viewModel.isAuthenticated && viewModel.needsAuth {
+                authView
+            } else {
+                mainContent
+            }
+        }
+        .onAppear { authenticateIfNeeded() }
+    }
+
+    // MARK: - Auth (Tier 3.18)
+    private func authenticateIfNeeded() {
+        Task {
+            let result = await AuthManager.shared.authenticate()
+            switch result {
+            case .authenticated(let role):
+                viewModel.isAuthenticated = true
+                viewModel.userRole = role
+            case .unauthenticated:
+                viewModel.needsAuth = AuthManager.shared.currentRole == .admin
+                viewModel.isAuthenticated = !viewModel.needsAuth
+            }
+        }
+    }
+
+    private var authView: some View {
+        VStack(spacing: 20) {
+            Image(systemName: "lock.shield")
+                .font(.system(size: 56))
+                .foregroundStyle(.tint)
+            Text("LAN Scanner")
+                .font(.largeTitle).bold()
+            Text("Authenticate with Touch ID to continue")
+                .foregroundStyle(.secondary)
+            Button("Authenticate") { authenticateIfNeeded() }
+                .buttonStyle(.borderedProminent)
+                .controlSize(.large)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    // MARK: - Main Content
+    private var mainContent: some View {
         NavigationSplitView {
             sidebar
+                .navigationSplitViewColumnWidth(min: 240, ideal: sidebarWidth, max: 360)
         } detail: {
             if let device = viewModel.selectedDevice {
                 deviceDetail(device: device)
@@ -21,7 +69,7 @@ public struct ContentView: View {
             }
         }
         .toolbar { toolbarContent }
-        .frame(minWidth: 900, minHeight: 600)
+        .frame(minWidth: 1024, minHeight: 700)
         .sheet(isPresented: $viewModel.showConfig) {
             ConfigSheet(config: $viewModel.config, viewModel: viewModel)
         }
@@ -50,155 +98,267 @@ public struct ContentView: View {
         .sheet(isPresented: $viewModel.showRuleEditor) {
             RuleEditorView(viewModel: viewModel, rule: viewModel.editingRule)
         }
-        .keyboardShortcutHandling(viewModel: viewModel)
+        .sheet(isPresented: $viewModel.showCompareView) {
+            ScanCompareView(
+                currentDevices: viewModel.sourceDevices,
+                history: viewModel.history,
+                loadDevices: { scanID in try? ScanStore.shared.loadDevices(scanID: scanID) }
+            )
+        }
+        .sheet(isPresented: $viewModel.showExportPreview) {
+            ExportPreviewView(content: viewModel.exportPreviewContent, format: viewModel.exportPreviewFormat) {
+                viewModel.exportSaveAction?()
+                viewModel.showToast(message: "Export saved")
+            }
+        }
+        .sheet(isPresented: $viewModel.showAuditLog) {
+            auditLogSheet
+        }
+        .sheet(isPresented: $viewModel.showProfiles) {
+            profileSheet
+        }
+        .toast(isPresented: $viewModel.isShowingToast, message: viewModel.toastMessage ?? "", icon: viewModel.toastIcon, color: viewModel.toastColor)
+        .background {
+            Button("") { viewModel.startScan() }
+                .keyboardShortcut("r", modifiers: .command).hidden()
+                .disabled(viewModel.isScanning || !AuthManager.shared.requireRole(.operator_))
+            Button("") { viewModel.stopScan() }
+                .keyboardShortcut(".", modifiers: .command).hidden()
+                .disabled(!viewModel.isScanning)
+            Button("") { viewModel.showConfig = true }
+                .keyboardShortcut(",", modifiers: .command).hidden()
+            Button("") { isSearchFocused = true }
+                .keyboardShortcut("f", modifiers: .command).hidden()
+        }
     }
 
-    // MARK: - Sidebar
+    // MARK: - Sidebar (Tiers 1.1, 1.2, 1.6, 2.12)
     private var sidebar: some View {
         VStack(spacing: 0) {
             searchBar
                 .padding(.horizontal, 8)
                 .padding(.vertical, 6)
 
-            Picker("Scan source", selection: .init(
-                get: { viewModel.selectedHistoryScanID == nil ? "current" : "history" },
-                set: { if $0 == "current" { viewModel.selectedHistoryScanID = nil } }
-            )) {
-                Text("Current Scan").tag("current")
-                Text("History (\(viewModel.history.count))").tag("history")
+            Picker("Scan source", selection: $viewModel.scanSource) {
+                ForEach(ScannerViewModel.ScanSource.allCases, id: \.self) { source in
+                    Text(source.rawValue).tag(source)
+                }
             }
             .pickerStyle(.segmented)
             .padding(.horizontal, 8)
             .padding(.bottom, 4)
             .labelsHidden()
+            .onChange(of: viewModel.scanSource) { _, newValue in
+                if newValue == .current {
+                    viewModel.selectedHistoryScanID = nil
+                    viewModel.historyDevices = []
+                }
+            }
+
+            if viewModel.scanSource == .history {
+                historyPicker
+            }
 
             Divider()
 
-            let sourceDevices = viewModel.selectedHistoryScanID != nil ? viewModel.historyDevices : viewModel.devices
-
             tagFilterBar
 
-            List(selection: $viewModel.selectedDevice) {
-                let displayDevices = viewModel.tagFilter != nil ? viewModel.filteredDevicesWithTags : sourceDevices
-                ForEach(displayDevices) { device in
-                    DeviceRow(device: device, tags: viewModel.deviceTags[device.ip] ?? [])
-                        .tag(device)
-                        .transition(.slide)
-                }
+            if viewModel.isScanning && viewModel.sourceDevices.isEmpty {
+                skeletonList
+            } else if !viewModel.sourceDevices.isEmpty || viewModel.isScanning {
+                deviceList
+            } else {
+                emptySidebarList
             }
-            .listStyle(.sidebar)
-            .frame(minWidth: 250)
-            .animation(.easeInOut(duration: 0.3), value: sourceDevices)
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
-    @ViewBuilder
-    private var tagFilterBar: some View {
-        let tags = viewModel.allKnownTags
-        if !tags.isEmpty {
-            VStack(alignment: .leading, spacing: 4) {
-                ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(spacing: 4) {
-                        Button("All") {
-                            viewModel.tagFilter = nil
-                        }
-                        .font(.caption2)
-                        .buttonStyle(.plain)
-                        .foregroundStyle(viewModel.tagFilter == nil ? Color.accentColor : .secondary)
-                        .bold(viewModel.tagFilter == nil)
-
-                        ForEach(tags) { tag in
-                            Button(tag.name) {
-                                viewModel.tagFilter = viewModel.tagFilter == tag.name ? nil : tag.name
-                            }
-                            .font(.caption2)
-                            .buttonStyle(.plain)
-                            .foregroundStyle(viewModel.tagFilter == tag.name ? tagColor(tag.color) : .secondary)
-                            .bold(viewModel.tagFilter == tag.name)
-                        }
-                    }
-                    .padding(.horizontal, 8)
-                }
+    private var emptySidebarList: some View {
+        VStack(spacing: 12) {
+            Spacer()
+            Image(systemName: "magnifyingglass.circle")
+                .font(.system(size: 32))
+                .foregroundStyle(.tertiary)
+            Text("No devices yet")
+                .font(.headline)
+                .foregroundStyle(.secondary)
+            Text("Run a scan to discover devices on your network")
+                .font(.caption)
+                .foregroundStyle(.tertiary)
+                .multilineTextAlignment(.center)
+                .padding(.horizontal)
+            Button("Start Scan") {
+                viewModel.startScan()
             }
-            .padding(.vertical, 4)
+            .buttonStyle(BorderedProminentButtonStyle())
+            .controlSize(.small)
+            Spacer()
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
+
+    private var historyPicker: some View {
+        Picker("Select scan", selection: Binding(
+            get: { viewModel.selectedHistoryScanID ?? "" },
+            set: { if !$0.isEmpty { viewModel.selectHistoryScan(scanID: $0) } }
+        )) {
+            Text("Choose a scan...").tag("")
+            ForEach(viewModel.history) { summary in
+                Text(summary.timestamp.formatted(date: .abbreviated, time: .shortened)).tag(summary.scanID)
+            }
+        }
+        .pickerStyle(.menu)
+        .padding(.horizontal, 8)
+        .padding(.vertical, 4)
+    }
+
+    private var skeletonList: some View {
+        List {
+            ForEach(0..<8, id: \.self) { _ in
+                SkeletonRow()
+            }
+            .listRowSeparator(.hidden)
+        }
+        .listStyle(.sidebar)
+        .frame(minWidth: 250)
+    }
+
+    // MARK: - Search (Tier 1.6)
+    @FocusState private var isSearchFocused: Bool
 
     private var searchBar: some View {
-        HStack {
+        HStack(spacing: 4) {
             Image(systemName: "magnifyingglass")
                 .foregroundStyle(.secondary)
+                .imageScale(.small)
             TextField("Filter by IP or hostname\u{2026}", text: $viewModel.searchText)
-                .textFieldStyle(.roundedBorder)
+                .textFieldStyle(.plain)
                 .font(.subheadline)
+                .focused($isSearchFocused)
             if !viewModel.searchText.isEmpty {
                 Button {
                     viewModel.searchText = ""
                 } label: {
                     Image(systemName: "xmark.circle.fill")
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(.tertiary)
+                        .imageScale(.small)
                 }
                 .buttonStyle(.plain)
             }
         }
-        .padding(6)
-        .background(Color(nsColor: .controlBackgroundColor))
-        .clipShape(.rect(cornerRadius: 6))
+        .padding(.horizontal, 8)
+        .padding(.vertical, 5)
+        .background(.surfaceSecondary)
+        .clipShape(RoundedRectangle(cornerRadius: 6))
+        .overlay(
+            RoundedRectangle(cornerRadius: 6)
+                .stroke(isSearchFocused ? Color.accentColor : Color.clear, lineWidth: 1.5)
+        )
         .accessibilityLabel("Search devices by IP or hostname")
-        .focusable()
     }
 
-    // MARK: - Dashboard
-    private var lastScanSubtitle: String {
-        if let first = viewModel.history.first {
-            let ago = RelativeDateTimeFormatter()
-            ago.unitsStyle = .abbreviated
-            return "Last scan: \(ago.localizedString(for: first.timestamp, relativeTo: Date()))"
+    // MARK: - Tag Filter (Tier 2.13)
+    private var tagFilterBar: some View {
+        let tags = viewModel.allKnownTags
+        return Group {
+            if !tags.isEmpty {
+                VStack(alignment: .leading, spacing: 4) {
+                    ScrollView(.horizontal, showsIndicators: false) {
+                        HStack(spacing: 4) {
+                            FilterChip(
+                                label: "All",
+                                isSelected: viewModel.tagFilter == nil,
+                                color: .gray
+                            ) { viewModel.tagFilter = nil }
+
+                            ForEach(tags) { tag in
+                                FilterChip(
+                                    label: tag.name,
+                                    isSelected: viewModel.tagFilter == tag.name,
+                                    color: tagColor(tag.color)
+                                ) {
+                                    viewModel.tagFilter = viewModel.tagFilter == tag.name ? nil : tag.name
+                                }
+                            }
+                        }
+                        .padding(.horizontal, 8)
+                    }
+                }
+                .padding(.vertical, 4)
+            }
         }
-        if !viewModel.devices.isEmpty {
-            return "Current session scan (not yet saved)"
-        }
-        return ""
     }
 
-    private var dashboard: some View {
-        ScrollView {
-            VStack(spacing: 24) {
-                if viewModel.isScanning {
-                    scanningOverlay
-                } else if viewModel.devices.isEmpty && viewModel.selectedHistoryScanID == nil {
-                    emptyState
-                } else {
-                    let sourceDevices = viewModel.selectedHistoryScanID != nil ? viewModel.historyDevices : viewModel.devices
-                    if !lastScanSubtitle.isEmpty {
-                        HStack {
-                            Label(lastScanSubtitle, systemImage: "clock")
-                                .font(.caption).foregroundStyle(.tertiary)
-                            Spacer()
+    // MARK: - Device List (Tier 2.12)
+    private var deviceList: some View {
+        List(selection: $viewModel.selectedDevice) {
+            let displayDevices = viewModel.tagFilter != nil ? viewModel.filteredDevicesWithTags : viewModel.filteredDevices
+            ForEach(displayDevices) { device in
+                DeviceRow(device: device, tags: viewModel.deviceTags[device.ip] ?? [])
+                    .tag(device)
+                    .transition(.slide)
+                    .contextMenu {
+                        Menu("Add Tag") {
+                            ForEach(viewModel.allKnownTags) { tag in
+                                Button(tag.name) { viewModel.addTag(tag.name, color: tag.color, to: device.ip) }
+                            }
+                        }
+                        if !viewModel.multiSelectedIPs.isEmpty {
+                            Button("Add to selection") { viewModel.multiSelectedIPs.insert(device.ip) }
+                        }
+                        Divider()
+                        Button("Copy IP") {
+                            NSPasteboard.general.clearContents()
+                            NSPasteboard.general.setString(device.ip, forType: .string)
                         }
                     }
-                    summaryCards(devices: sourceDevices)
-                    complianceFilterBar
-                    severityChart(devices: sourceDevices, compliance: viewModel.activeComplianceFilters)
-                    recentDevices(devices: sourceDevices)
-                }
-
-                if viewModel.history.isEmpty && viewModel.devices.isEmpty {
-                    EmptyView()
-                } else {
-                    Divider()
-                    historySection
-                    trendSection
-                }
             }
-            .padding(24)
         }
-        .animation(.smooth(duration: 0.3), value: viewModel.devices.count)
-        .animation(.smooth(duration: 0.3), value: viewModel.selectedHistoryScanID)
+        .listStyle(.sidebar)
+        .frame(minWidth: 250)
+        .animation(.easeInOut(duration: 0.3), value: viewModel.sourceDevices.count)
+        .animation(.easeInOut(duration: 0.3), value: viewModel.tagFilter)
+    }
+
+    // MARK: - Dashboard (Tier 2.9: Tabbed)
+    private var dashboard: some View {
+        VStack(spacing: 0) {
+            if viewModel.isViewingHistory {
+                HStack {
+                    Label("Viewing history scan", systemImage: "clock.arrow.circlepath")
+                        .font(.caption).foregroundStyle(.secondary)
+                    Button("Back to current") { viewModel.switchToCurrentScan() }
+                        .buttonStyle(.plain).font(.caption).foregroundStyle(Color.accentColor)
+                    Spacer()
+                }
+                .padding(.horizontal, 24)
+                .padding(.top, 12)
+            }
+
+            if viewModel.isScanning && viewModel.sourceDevices.isEmpty {
+                scanningView
+            } else if viewModel.sourceDevices.isEmpty && !viewModel.isViewingHistory {
+                EmptyStateView(
+                    icon: "network.slash",
+                    title: "No scan results",
+                    message: "Configure scan settings, then hit Start Scan",
+                    actions: [
+                        EmptyStateAction(label: "Configure", icon: "gearshape", action: { viewModel.showConfig = true }),
+                        EmptyStateAction(label: "Start Scan", icon: "play.fill", primary: true, action: { viewModel.startScan() }),
+                    ]
+                )
+            } else {
+                dashboardTabs
+            }
+        }
+        .animation(.smooth(duration: 0.3), value: viewModel.sourceDevices.count)
+        .animation(.smooth(duration: 0.3), value: viewModel.isViewingHistory)
         .animation(.easeInOut(duration: 0.25), value: viewModel.activeComplianceFilters)
     }
 
-    private var scanningOverlay: some View {
+    // MARK: - Scanning View (Tier 1.2)
+    private var scanningView: some View {
         VStack(spacing: 20) {
             ProgressView()
                 .progressViewStyle(.circular)
@@ -219,42 +379,230 @@ public struct ContentView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
-    private var emptyState: some View {
-        VStack(spacing: 20) {
-            Image(systemName: "network.slash")
-                .font(.system(size: 56))
-                .foregroundStyle(.tertiary)
-            Text("No scan results")
-                .font(.title2).bold()
-            Text("Configure scan settings, then hit Start Scan")
-                .font(.subheadline)
-                .foregroundStyle(.secondary)
-            HStack(spacing: 16) {
-                Button {
-                    viewModel.showConfig = true
-                } label: {
-                    Label("Configure", systemImage: "gearshape")
-                }
-                .buttonStyle(.bordered)
-
-                Button {
-                    viewModel.startScan()
-                } label: {
-                    Label("Start Scan", systemImage: "play.fill")
-                }
-                .buttonStyle(.borderedProminent)
+    // MARK: - Dashboard Tabs
+    private var dashboardTabs: some View {
+        VStack(spacing: 0) {
+            Picker("Dashboard Tab", selection: $dashboardTab) {
+                Label("Overview", systemImage: "rectangle.grid.1x2").tag(DashboardTab.overview)
+                Label("Devices", systemImage: "desktopcomputer").tag(DashboardTab.devices)
+                Label("Vulnerabilities", systemImage: "exclamationmark.triangle").tag(DashboardTab.vulns)
+                Label("Compliance", systemImage: "checklist").tag(DashboardTab.compliance)
+                Label("History", systemImage: "clock.arrow.circlepath").tag(DashboardTab.history)
             }
-            .padding(.top, 8)
+            .pickerStyle(.segmented)
+            .padding(.horizontal, 24)
+            .padding(.vertical, 8)
+
+            Divider()
+
+            ScrollView {
+                Group {
+                    switch dashboardTab {
+                    case .overview: overviewTab
+                    case .devices: devicesTab
+                    case .vulns: vulnsTab
+                    case .compliance: complianceTab
+                    case .history: historyTab
+                    }
+                }
+                .padding(24)
+            }
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
+    @State private var dashboardTab: DashboardTab = .overview
+
+    private enum DashboardTab: String, CaseIterable {
+        case overview = "Overview"
+        case devices = "Devices"
+        case vulns = "Vulnerabilities"
+        case compliance = "Compliance"
+        case history = "History"
+    }
+
+    // MARK: - Overview Tab
+    private var overviewTab: some View {
+        VStack(spacing: 24) {
+            let source = viewModel.sourceDevices
+            if !lastScanSubtitle.isEmpty {
+                HStack {
+                    Label(lastScanSubtitle, systemImage: "clock")
+                        .font(.caption).foregroundStyle(.tertiary)
+                    Spacer()
+                }
+            }
+            summaryCards(devices: source)
+            complianceFilterBar
+            severityChart(devices: source, compliance: viewModel.activeComplianceFilters)
+            recentDevices(devices: source)
+            trendSection
+        }
+    }
+
+    private var lastScanSubtitle: String {
+        if viewModel.isViewingHistory {
+            if let first = viewModel.history.first(where: { $0.scanID == viewModel.selectedHistoryScanID }) {
+                let ago = RelativeDateTimeFormatter()
+                ago.unitsStyle = .abbreviated
+                return "Scan from: \(ago.localizedString(for: first.timestamp, relativeTo: Date()))"
+            }
+        }
+        if let first = viewModel.history.first {
+            let ago = RelativeDateTimeFormatter()
+            ago.unitsStyle = .abbreviated
+            return "Last scan: \(ago.localizedString(for: first.timestamp, relativeTo: Date()))"
+        }
+        if !viewModel.devices.isEmpty {
+            return "Current session scan (not yet saved)"
+        }
+        return ""
+    }
+
+    // MARK: - Devices Tab (Tier 2.11, 2.12)
+    private var devicesTab: some View {
+        let source = viewModel.sourceDevices
+        let sorted = source.sorted { $0.riskScore > $1.riskScore }
+        return VStack(alignment: .leading, spacing: 12) {
+            Text("All Devices (\(source.count))")
+                .font(.headline)
+
+            if let severity = viewModel.selectedSeverityFilter {
+                HStack {
+                    Label("Filtered: \(severity.rawValue.capitalized) severity", systemImage: "line.3.horizontal.decrease.circle.fill")
+                        .font(.caption).foregroundStyle(.secondary)
+                    Button("Clear") { viewModel.selectedSeverityFilter = nil }
+                        .buttonStyle(.plain).font(.caption).foregroundStyle(Color.accentColor)
+                }
+            }
+
+            LazyVStack(spacing: 6) {
+                ForEach(sorted) { device in
+                    DeviceDetailRow(device: device, tags: viewModel.deviceTags[device.ip] ?? [])
+                        .onTapGesture { viewModel.selectedDevice = device }
+                }
+            }
+        }
+    }
+
+    // MARK: - Vulns Tab
+    private var vulnsTab: some View {
+        let allVulns = viewModel.sourceDevices.flatMap(\.vulnerabilities).sorted()
+        return VStack(alignment: .leading, spacing: 12) {
+            Text("All Vulnerabilities (\(allVulns.count))")
+                .font(.headline)
+
+            if allVulns.isEmpty {
+                EmptyStateView(icon: "checkmark.shield", title: "No vulnerabilities", message: "No vulnerabilities detected across scanned devices")
+            } else {
+                LazyVStack(spacing: 6) {
+                    ForEach(allVulns.prefix(vulnDisplayLimit)) { vuln in
+                        VulnRowMini(vuln: vuln)
+                    }
+                    if allVulns.count > vulnDisplayLimit {
+                        HStack(spacing: 6) {
+                            Text("Showing \(vulnDisplayLimit) of \(allVulns.count) vulnerabilities")
+                                .font(.caption).foregroundStyle(.secondary)
+                            Button("Show All") { vulnDisplayLimit = Int.max }
+                                .font(.caption).buttonStyle(.plain).foregroundStyle(Color.accentColor)
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // MARK: - Compliance Tab
+    private var complianceTab: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            Text("Compliance Mapping").font(.headline)
+
+            let frameworks = ComplianceFramework.allCases
+            ForEach(frameworks, id: \.self) { fw in
+                let related = viewModel.sourceDevices.flatMap(\.vulnerabilities).filter { $0.compliance.contains(fw) }
+                if !related.isEmpty {
+                    VStack(alignment: .leading, spacing: 4) {
+                        HStack {
+                            Circle().fill(frameworkColor(fw)).frame(width: 8, height: 8)
+                            Text(fw.rawValue).font(.body).bold()
+                            Spacer()
+                            Text("\(related.count) findings").font(.caption).foregroundStyle(.secondary)
+                        }
+                        let unique = Set(related.map(\.id)).sorted()
+                        Text(unique.joined(separator: ", "))
+                            .font(.caption).foregroundStyle(.secondary)
+                    }
+                    .padding()
+                    .background(.surfacePrimary)
+                    .clipShape(RoundedRectangle(cornerRadius: 8))
+                    .overlay(RoundedRectangle(cornerRadius: 8).stroke(.borderStandard, lineWidth: 1))
+                }
+            }
+        }
+    }
+
+    // MARK: - History Tab (Tier 1.4)
+    private var historyTab: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Scan History (\(viewModel.history.count))")
+                .font(.headline)
+
+            if viewModel.history.isEmpty {
+                EmptyStateView(icon: "clock.arrow.circlepath", title: "No history", message: "Run a scan to populate history")
+            } else {
+                LazyVStack(spacing: 8) {
+                    ForEach(viewModel.history.prefix(viewModel.historyLoadCount)) { summary in
+                        Button {
+                            viewModel.selectHistoryScan(scanID: summary.scanID)
+                        } label: {
+                            HStack {
+                                Circle()
+                                    .fill(riskColor(summary.riskScore))
+                                    .frame(width: 8, height: 8)
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(summary.timestamp.formatted(date: .abbreviated, time: .shortened))
+                                        .font(.body)
+                                    Text("\(summary.deviceCount) devices \u{00B7} \(summary.totalVulnerabilities) vulns \u{00B7} \(String(format: "%.1f", summary.riskScore)) risk")
+                                        .font(.caption).foregroundStyle(.secondary)
+                                }
+                                Spacer()
+                                riskBadge(score: summary.riskScore)
+                            }
+                            .padding(.vertical, 2)
+                        }
+                        .buttonStyle(.plain)
+                        .contextMenu {
+                            Button("Load scan") { viewModel.selectHistoryScan(scanID: summary.scanID) }
+                            if viewModel.userRole.canDeleteHistory {
+                                Divider()
+                                Button("Delete scan", role: .destructive) { viewModel.deleteHistoryScan(scanID: summary.scanID) }
+                            }
+                        }
+                    }
+
+                    if viewModel.history.count > viewModel.historyLoadCount {
+                        HStack(spacing: 6) {
+                            if viewModel.isLoadingMoreHistory {
+                                ProgressView().controlSize(.small).scaleEffect(0.7)
+                            }
+                            Button("Show More (\(viewModel.history.count - viewModel.historyLoadCount) remaining)") {
+                                viewModel.loadMoreHistory()
+                            }
+                            .font(.caption).buttonStyle(.bordered).frame(maxWidth: .infinity)
+                            .disabled(viewModel.isLoadingMoreHistory)
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // MARK: - Summary Cards (Tier 4.28: shadows)
     private func summaryCards(devices: [Device]) -> some View {
         let totalOpen = devices.reduce(0) { $0 + $1.ports.filter { $0.state == .open }.count }
         let totalVulns = devices.reduce(0) { $0 + $1.vulnerabilities.count }
         let maxRisk = devices.map(\.riskScore).max() ?? 0
 
-        return LazyVGrid(columns: [GridItem(.adaptive(minimum: 160))], spacing: 16) {
+        return LazyVGrid(columns: [GridItem(.adaptive(minimum: 150))], spacing: 16) {
             StatCard(title: "Devices", value: "\(devices.count)", icon: "desktopcomputer", color: .blue)
             StatCard(title: "Open Ports", value: "\(totalOpen)", icon: "door.left.hand.open", color: .orange)
             StatCard(title: "Vulnerabilities", value: "\(totalVulns)", icon: "exclamationmark.triangle", color: .red)
@@ -263,56 +611,79 @@ public struct ContentView: View {
         }
     }
 
+    // MARK: - Compliance Filter (collapsible)
     private var complianceFilterBar: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text("Compliance Filter").font(.caption).foregroundStyle(.secondary)
-            HStack(spacing: 8) {
-                ForEach(ComplianceFramework.allCases, id: \.self) { framework in
-                    let isActive = viewModel.activeComplianceFilters.contains(framework)
-                    Button {
-                        if isActive {
-                            viewModel.activeComplianceFilters.remove(framework)
-                        } else {
-                            viewModel.activeComplianceFilters.insert(framework)
+        let hasComplianceVulns = viewModel.sourceDevices.contains(where: { $0.vulnerabilities.contains(where: { !$0.compliance.isEmpty }) })
+        let hasActiveFilters = !viewModel.activeComplianceFilters.isEmpty
+
+        return Group {
+            if hasActiveFilters || hasComplianceVulns {
+                if hasActiveFilters || showComplianceBar {
+                    VStack(alignment: .leading, spacing: 8) {
+                        HStack {
+                            Text("Compliance Filter").font(.caption).foregroundStyle(.secondary)
+                            Spacer()
+                            if !hasActiveFilters {
+                                Button("Hide") { showComplianceBar = false }
+                                    .font(.caption2).foregroundStyle(.secondary).buttonStyle(.plain)
+                            }
                         }
+                        HStack(spacing: 8) {
+                            ForEach(ComplianceFramework.allCases, id: \.self) { framework in
+                                FilterChip(
+                                    label: framework.rawValue,
+                                    isSelected: viewModel.activeComplianceFilters.contains(framework),
+                                    color: frameworkColor(framework)
+                                ) {
+                                    if viewModel.activeComplianceFilters.contains(framework) {
+                                        viewModel.activeComplianceFilters.remove(framework)
+                                    } else {
+                                        viewModel.activeComplianceFilters.insert(framework)
+                                    }
+                                }
+                            }
+                            if !viewModel.activeComplianceFilters.isEmpty {
+                                Button("Clear") { viewModel.activeComplianceFilters.removeAll() }
+                                    .font(.caption2).foregroundStyle(.secondary)
+                                    .buttonStyle(.plain)
+                            }
+                        }
+                    }
+                    .padding()
+                    .background(.surfacePrimary)
+                    .clipShape(RoundedRectangle(cornerRadius: 10))
+                    .overlay(RoundedRectangle(cornerRadius: 10).stroke(.borderStandard, lineWidth: 1))
+                } else {
+                    Button {
+                        showComplianceBar = true
                     } label: {
                         HStack(spacing: 4) {
-                            if isActive {
-                                Image(systemName: "checkmark.circle.fill").font(.caption2)
-                            }
-                            Text(framework.rawValue).font(.caption2).bold()
+                            Image(systemName: "line.3.horizontal.decrease.circle").font(.caption)
+                            Text("Compliance Filter").font(.caption)
                         }
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 4)
-                        .background(isActive ? Color.accentColor : Color(nsColor: .controlBackgroundColor))
-                        .foregroundStyle(isActive ? .white : .primary)
-                        .clipShape(.rect(cornerRadius: 6))
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 6).stroke(isActive ? Color.accentColor : Color.gray.opacity(0.3), lineWidth: 1)
-                        )
+                        .foregroundStyle(.secondary)
                     }
                     .buttonStyle(.plain)
+                    .help("Filter vulnerabilities by compliance framework")
                 }
-                if !viewModel.activeComplianceFilters.isEmpty {
-                    Button("Clear") { viewModel.activeComplianceFilters.removeAll() }
-                        .font(.caption2).foregroundStyle(.secondary)
-                        .buttonStyle(.plain)
-                }
-            }
-            if !viewModel.activeComplianceFilters.isEmpty {
-                Text("Showing vulns relevant to \(viewModel.complianceSummary)")
-                    .font(.caption2).foregroundStyle(.secondary)
             }
         }
-        .padding()
-        .background(Color(nsColor: .windowBackgroundColor))
-        .clipShape(.rect(cornerRadius: 10))
     }
 
+    // MARK: - Severity Chart (Tier 2.11)
     private func severityChart(devices: [Device], compliance: Set<ComplianceFramework> = []) -> some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text("Vulnerability Severity Distribution")
-                .font(.headline)
+            HStack {
+                Text("Vulnerability Severity Distribution")
+                    .font(.headline)
+                if !compliance.isEmpty {
+                    Text("(filtered)")
+                        .font(.caption).foregroundStyle(Color.accentColor)
+                        .padding(.horizontal, 6).padding(.vertical, 2)
+                        .background(Color.accentColor.opacity(0.1))
+                        .clipShape(RoundedRectangle(cornerRadius: 4))
+                }
+            }
 
             let allVulns = devices.flatMap(\.vulnerabilities)
             let vulns = compliance.isEmpty ? allVulns : allVulns.filter { !Set($0.compliance).isDisjoint(with: compliance) }
@@ -335,6 +706,22 @@ public struct ContentView: View {
                         }
                     }
                 }
+                .chartOverlay { proxy in
+                    GeometryReader { geometry in
+                        Rectangle().fill(.clear).contentShape(Rectangle())
+                            .onTapGesture { location in
+                                guard let plotFrame = proxy.plotFrame else { return }
+                                let x = location.x - geometry[plotFrame].origin.x
+                                guard x >= 0 else { return }
+                                if let key: String = proxy.value(atX: x, as: String.self) {
+                                    let keyStr = key
+                                    if let level = SeverityLevel.allCases.first(where: { $0.rawValue.capitalized == keyStr }) {
+                                        viewModel.toggleSeverityFilter(level)
+                                    }
+                                }
+                            }
+                    }
+                }
                 .chartForegroundStyleScale([
                     "CRITICAL": .red, "HIGH": .orange, "MEDIUM": .yellow,
                     "LOW": .blue, "INFO": .gray
@@ -344,85 +731,43 @@ public struct ContentView: View {
             }
         }
         .padding()
-        .background(Color(nsColor: .windowBackgroundColor))
-        .clipShape(.rect(cornerRadius: 10))
+        .background(.surfacePrimary)
+        .clipShape(RoundedRectangle(cornerRadius: 10))
+        .overlay(RoundedRectangle(cornerRadius: 10).stroke(.borderStandard, lineWidth: 1))
     }
 
+    // MARK: - Recent Devices
     private func recentDevices(devices: [Device]) -> some View {
         VStack(alignment: .leading, spacing: 12) {
             Text("Devices by Risk").font(.headline)
 
             let sorted = devices.sorted { $0.riskScore > $1.riskScore }
-            ForEach(sorted.prefix(5)) { device in
-                HStack {
-                    Image(systemName: "circle.fill").font(.system(size: 8))
-                        .foregroundStyle(riskColor(device.riskScore))
-                    Text(device.host ?? device.ip).font(.body)
-                    Spacer()
-                    HStack(spacing: 4) {
-                        Text("\(device.ports.filter { $0.state == .open }.count) ports")
-                            .font(.caption).foregroundStyle(.secondary)
-                        Text("\(device.vulnerabilities.count) vulns")
-                            .font(.caption).foregroundStyle(.secondary)
-                    }
-                    Text(String(format: "%.1f", device.riskScore))
-                        .font(.caption).bold()
-                        .foregroundStyle(riskColor(device.riskScore))
-                }
-                .padding(.vertical, 4)
-            }
-        }
-        .padding()
-        .background(Color(nsColor: .windowBackgroundColor))
-        .clipShape(.rect(cornerRadius: 10))
-    }
-
-    // MARK: - History Section
-    private var historySection: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Text("Scan History (\(viewModel.history.count))")
-                .font(.headline)
-
-            if viewModel.history.isEmpty {
-                Text("No previous scans").foregroundStyle(.secondary).font(.subheadline)
+            if sorted.isEmpty {
+                Text("No devices found").foregroundStyle(.secondary).font(.subheadline)
             } else {
-                LazyVStack(spacing: 8) {
-                    ForEach(viewModel.history.prefix(10)) { summary in
-                        Button {
-                            viewModel.selectHistoryScan(scanID: summary.scanID)
-                        } label: {
-                            HStack {
-                                Circle()
-                                    .fill(riskColor(summary.riskScore))
-                                    .frame(width: 8, height: 8)
-                                VStack(alignment: .leading, spacing: 2) {
-                                    Text(summary.timestamp.formatted(date: .abbreviated, time: .shortened))
-                                        .font(.body)
-                                    Text("\(summary.deviceCount) devices \u{00B7} \(summary.totalVulnerabilities) vulns \u{00B7} \(String(format: "%.1f", summary.riskScore)) risk")
-                                        .font(.caption).foregroundStyle(.secondary)
-                                }
-                                Spacer()
-                                Text(summary.config.portRange.lowerBound == 1 && summary.config.portRange.upperBound == 1024 ? "Well-known" : "\(summary.config.portRange.lowerBound)-\(summary.config.portRange.upperBound)")
-                                    .font(.caption2).foregroundStyle(.tertiary)
-                                    .padding(.horizontal, 4).padding(.vertical, 2)
-                                    .background(Color(nsColor: .controlBackgroundColor))
-                                    .clipShape(.rect(cornerRadius: 4))
-                            }
-                            .padding(.vertical, 2)
+                ForEach(sorted.prefix(5)) { device in
+                    HStack {
+                        riskSymbol(device.riskScore)
+                            .font(.system(size: 8))
+                            .foregroundStyle(riskColor(device.riskScore))
+                        Text(device.host ?? device.ip).font(.body)
+                        Spacer()
+                        HStack(spacing: 4) {
+                            Text("\(device.ports.filter { $0.state == .open }.count) ports")
+                                .font(.caption).foregroundStyle(.secondary)
+                            Text("\(device.vulnerabilities.count) vulns")
+                                .font(.caption).foregroundStyle(.secondary)
                         }
-                        .buttonStyle(.plain)
-                        .contextMenu {
-                            Button("Load scan") { viewModel.selectHistoryScan(scanID: summary.scanID) }
-                            Divider()
-                            Button("Delete scan", role: .destructive) { viewModel.deleteHistoryScan(scanID: summary.scanID) }
-                        }
+                        riskBadge(score: device.riskScore)
                     }
+                    .padding(.vertical, 4)
                 }
             }
         }
         .padding()
-        .background(Color(nsColor: .windowBackgroundColor))
-        .clipShape(.rect(cornerRadius: 10))
+        .background(.surfacePrimary)
+        .clipShape(RoundedRectangle(cornerRadius: 10))
+        .overlay(RoundedRectangle(cornerRadius: 10).stroke(.borderStandard, lineWidth: 1))
     }
 
     // MARK: - Trend Section
@@ -467,8 +812,9 @@ public struct ContentView: View {
             }
         }
         .padding()
-        .background(Color(nsColor: .windowBackgroundColor))
-        .clipShape(.rect(cornerRadius: 10))
+        .background(.surfacePrimary)
+        .clipShape(RoundedRectangle(cornerRadius: 10))
+        .overlay(RoundedRectangle(cornerRadius: 10).stroke(.borderStandard, lineWidth: 1))
     }
 
     // MARK: - Device Detail
@@ -498,6 +844,11 @@ public struct ContentView: View {
                 Text(device.host ?? device.ip)
                     .font(.title).bold()
                 riskBadge(score: device.riskScore)
+                riskBadgeText(device.riskScore)
+                    .font(.caption2).bold().foregroundStyle(.white)
+                    .padding(.horizontal, 4).padding(.vertical, 1)
+                    .background(riskColor(device.riskScore))
+                    .clipShape(RoundedRectangle(cornerRadius: 3))
             }
             HStack(spacing: 16) {
                 Label(device.ip, systemImage: "network")
@@ -513,6 +864,7 @@ public struct ContentView: View {
         }
     }
 
+    // MARK: - Tags (device detail)
     private func tagSection(device: Device) -> some View {
         let deviceTags = viewModel.deviceTags[device.ip, default: []]
         return VStack(alignment: .leading, spacing: 8) {
@@ -553,8 +905,9 @@ public struct ContentView: View {
             }
         }
         .padding()
-        .background(Color(nsColor: .windowBackgroundColor))
-        .clipShape(.rect(cornerRadius: 10))
+        .background(.surfacePrimary)
+        .clipShape(RoundedRectangle(cornerRadius: 10))
+        .overlay(RoundedRectangle(cornerRadius: 10).stroke(.borderStandard, lineWidth: 1))
         .sheet(isPresented: $viewModel.showTagEditor) {
             if let ip = viewModel.editingTagDevice {
                 TagEditorView(viewModel: viewModel, deviceIP: ip)
@@ -562,6 +915,7 @@ public struct ContentView: View {
         }
     }
 
+    // MARK: - Port Section (Tier 1.5: LazyVStack)
     private func portSection(device: Device) -> some View {
         VStack(alignment: .leading, spacing: 8) {
             let tcpOpen = device.ports.filter { $0.state == .open && $0.transport == .tcp }.count
@@ -590,16 +944,25 @@ public struct ContentView: View {
         }
     }
 
-    private func vulnSection(device: Device) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text("Vulnerabilities (\(device.vulnerabilities.count))")
+    // MARK: - Vuln Section (Tier 1.5: LazyVStack)
+    private func vulnSection(device: Device, limit: Int = 100) -> some View {
+        let vulns = device.vulnerabilities.sorted()
+        return VStack(alignment: .leading, spacing: 8) {
+            Text("Vulnerabilities (\(vulns.count)")
                 .font(.headline)
 
-            if device.vulnerabilities.isEmpty {
+            if vulns.isEmpty {
                 Text("No vulnerabilities detected").foregroundStyle(.secondary)
             } else {
-                ForEach(device.vulnerabilities.sorted()) { vuln in
-                    VulnRow(vuln: vuln)
+                LazyVStack(spacing: 6) {
+                    ForEach(vulns.prefix(limit)) { vuln in
+                        VulnRow(vuln: vuln)
+                    }
+                    if vulns.count > limit {
+                        Text("Showing \(limit) of \(vulns.count) vulnerabilities")
+                            .font(.caption).foregroundStyle(.tertiary)
+                            .padding(.top, 4)
+                    }
                 }
             }
         }
@@ -621,34 +984,7 @@ public struct ContentView: View {
                 }
                 .help("Start Scan (\u{2318}R)")
                 .accessibilityLabel("Start network scan")
-            }
-        }
-
-        ToolbarItem(placement: .automatic) {
-            Button(action: { showTopology = true }) {
-                Label("Topology Map", systemImage: "point.3.connected.trianglepath.dotted")
-            }
-            .help("Network Topology Map")
-            .disabled(viewModel.devices.isEmpty && viewModel.selectedHistoryScanID == nil)
-            .accessibilityLabel("Show network topology map")
-        }
-
-        ToolbarItem(placement: .automatic) {
-            Button(action: { viewModel.showRulesManager = true }) {
-                Label("Custom Rules", systemImage: "doc.badge.gearshape")
-            }
-            .help("Manage Custom Rules")
-            .accessibilityLabel("Manage custom vulnerability rules")
-        }
-
-        if !viewModel.config.rulesURL.isEmpty {
-            ToolbarItem(placement: .automatic) {
-                Button(action: { viewModel.updateRules() }) {
-                    Label("Update Rules", systemImage: "arrow.down.circle")
-                }
-                .disabled(viewModel.isUpdatingRules)
-                .help("Fetch latest rules")
-                .accessibilityLabel("Update vulnerability rules from remote")
+                .disabled(!AuthManager.shared.requireRole(.operator_))
             }
         }
 
@@ -662,16 +998,58 @@ public struct ContentView: View {
 
         ToolbarItem(placement: .automatic) {
             Menu {
-                Button(action: exportHTML) { Label("Export HTML Report", systemImage: "doc.text") }
+                Button(action: showExportHTML) { Label("Export HTML Report", systemImage: "doc.text") }
                 Divider()
-                Button(action: exportCSV) { Label("Export as CSV", systemImage: "tablecells") }
-                Button(action: exportJSON) { Label("Export as JSON", systemImage: "curlybraces") }
+                Button(action: showExportCSV) { Label("Export as CSV", systemImage: "tablecells") }
+                Button(action: showExportJSON) { Label("Export as JSON", systemImage: "curlybraces") }
+                Divider()
+                Menu("SIEM Export") {
+                    Button("CEF") { showExportSIEM(.cef) }
+                    Button("LEEF") { showExportSIEM(.leef) }
+                    Button("Syslog") { showExportSIEM(.syslog) }
+                    Button("Raw JSON") { showExportSIEM(.rawJSON) }
+                }
+                if viewModel.userRole == .admin {
+                    Divider()
+                    Button(action: { viewModel.showAuditLog = true }) { Label("Audit Log", systemImage: "list.bullet.clipboard") }
+                    Button(action: { viewModel.showProfiles = true }) { Label("Profiles", systemImage: "square.3.layers.3d") }
+                }
             } label: {
                 Label("Export", systemImage: "square.and.arrow.down")
             }
-            .disabled(viewModel.devices.isEmpty && viewModel.historyDevices.isEmpty)
+            .disabled(viewModel.sourceDevices.isEmpty)
             .help("Export Results")
             .accessibilityLabel("Export scan results")
+        }
+
+        ToolbarItem(placement: .automatic) {
+            Menu {
+                Button(action: { showTopology = true }) {
+                    Label("Topology Map", systemImage: "point.3.connected.trianglepath.dotted")
+                }
+                .disabled(viewModel.sourceDevices.isEmpty)
+
+                Button(action: { viewModel.prepareComparison() }) {
+                    Label("Compare Scans", systemImage: "rectangle.split.2x2")
+                }
+                .disabled(viewModel.sourceDevices.isEmpty || viewModel.history.isEmpty)
+
+                Divider()
+
+                Button(action: { viewModel.showRulesManager = true }) {
+                    Label("Custom Rules", systemImage: "doc.badge.gearshape")
+                }
+
+                if !viewModel.config.rulesURL.isEmpty {
+                    Button(action: { viewModel.updateRules() }) {
+                        Label("Update Rules", systemImage: "arrow.down.circle")
+                    }
+                    .disabled(viewModel.isUpdatingRules)
+                }
+            } label: {
+                Label("More", systemImage: "ellipsis.circle")
+            }
+            .help("More actions")
         }
 
         ToolbarItem(placement: .status) {
@@ -679,9 +1057,27 @@ public struct ContentView: View {
                 Circle()
                     .fill(statusColor)
                     .frame(width: 7, height: 7)
-                Text(viewModel.statusMessage)
-                    .font(.caption)
-                    .lineLimit(1)
+
+                Group {
+                    if viewModel.isScanning {
+                        Text(viewModel.statusMessage)
+                    } else if let err = viewModel.errorMessage {
+                        Text(err).foregroundStyle(.red)
+                    } else if viewModel.sourceDevices.isEmpty {
+                        Text("No data")
+                    } else {
+                        Text("\(viewModel.sourceDevices.count) device\(viewModel.sourceDevices.count == 1 ? "" : "s")")
+                    }
+                }
+                .font(.caption)
+                .lineLimit(1)
+
+                if viewModel.rulesVersion > 0 {
+                    Text("v\(viewModel.rulesVersion)")
+                        .font(.caption2)
+                        .foregroundStyle(.tertiary)
+                        .help("Vulnerability rules version")
+                }
 
                 if viewModel.isUpdatingRules {
                     ProgressView()
@@ -690,94 +1086,78 @@ public struct ContentView: View {
                         .scaleEffect(0.5)
                 }
 
-                if viewModel.rulesVersion > 0, !viewModel.isScanning {
-                    Text("v\(viewModel.rulesVersion)")
+                if RuleUpdater.isCacheStale() {
+                    Image(systemName: "clock.arrow.circlepath")
                         .font(.caption2)
-                        .foregroundStyle(.tertiary)
-                    if RuleUpdater.isCacheStale() {
-                        Image(systemName: "clock.arrow.circlepath")
-                            .font(.caption2)
-                            .foregroundStyle(.orange)
-                    }
+                        .foregroundStyle(.orange)
+                        .help("Rules update available")
                 }
 
-                if viewModel.peakMemoryMB > 100 {
-                    Text("\(String(format: "%.0f", viewModel.peakMemoryMB)) MB")
-                        .font(.caption2)
-                        .foregroundStyle(.tertiary)
+                if viewModel.userRole != .admin {
+                    Text("[\(viewModel.userRole.rawValue)]")
+                        .font(.caption2).foregroundStyle(.secondary)
                 }
             }
         }
     }
 
-    private func exportHTML() {
+    // MARK: - Export with Preview (Tier 2.16, 4.31)
+    private func showExportHTML() {
         let html = viewModel.exportHTML()
-        let panel = NSSavePanel()
-        panel.allowedContentTypes = [.html]
-        panel.nameFieldStringValue = "scan-report.html"
-        panel.begin { response in
-            if response == .OK, let url = panel.url {
-                do {
-                    try html.write(to: url, atomically: true, encoding: .utf8)
-                    Logger.ui.info("HTML report exported to \(url.path)")
-                } catch {
-                    viewModel.errorMessage = "Failed to export HTML: \(error.localizedDescription)"
-                }
-            }
-        }
+        viewModel.showExportPreview(html, format: "HTML") { saveExport(html, type: .html, name: "scan-report.html") }
     }
 
-    private func exportCSV() {
+    private func showExportCSV() {
         let csv = viewModel.exportCSV()
-        let panel = NSSavePanel()
-        panel.allowedContentTypes = [.commaSeparatedText]
-        panel.nameFieldStringValue = "scan-report.csv"
-        panel.begin { response in
-            if response == .OK, let url = panel.url {
-                do {
-                    try csv.write(to: url, atomically: true, encoding: .utf8)
-                    Logger.ui.info("CSV exported to \(url.path)")
-                } catch {
-                    viewModel.errorMessage = "Failed to export CSV: \(error.localizedDescription)"
-                }
-            }
-        }
+        viewModel.showExportPreview(csv, format: "CSV") { saveExport(csv, type: .commaSeparatedText, name: "scan-report.csv") }
     }
 
-    private func exportJSON() {
+    private func showExportJSON() {
         let json = viewModel.exportJSON()
+        viewModel.showExportPreview(json, format: "JSON") { saveExport(json, type: .json, name: "scan-report.json") }
+    }
+
+    private func showExportSIEM(_ format: SIEMFormat) {
+        let content = viewModel.exportSIEM(format: format)
+        viewModel.showExportPreview(content, format: format.rawValue) { saveExport(content, type: .plainText, name: "scan-export.\(format.rawValue.lowercased())") }
+    }
+
+    private func saveExport(_ content: String, type: UTType, name: String) {
         let panel = NSSavePanel()
-        panel.allowedContentTypes = [.json]
-        panel.nameFieldStringValue = "scan-report.json"
+        panel.allowedContentTypes = [type]
+        panel.nameFieldStringValue = name
         panel.begin { response in
             if response == .OK, let url = panel.url {
                 do {
-                    try json.write(to: url, atomically: true, encoding: .utf8)
-                    Logger.ui.info("JSON exported to \(url.path)")
+                    try content.write(to: url, atomically: true, encoding: .utf8)
+                    AuditLogger.shared.log(action: .exportPerformed, detail: "Exported \(url.lastPathComponent)", category: .export)
+                    viewModel.showToast(message: "Exported to \(url.lastPathComponent)")
                 } catch {
-                    viewModel.errorMessage = "Failed to export JSON: \(error.localizedDescription)"
+                    viewModel.errorMessage = "Failed to export: \(error.localizedDescription)"
                 }
             }
         }
     }
 
+    // MARK: - Status
     private var statusColor: Color {
         if viewModel.isScanning { return .orange }
         if viewModel.isUpdatingRules { return .orange }
-        if viewModel.devices.isEmpty && viewModel.historyDevices.isEmpty { return .gray }
-        if viewModel.devices.contains(where: { $0.vulnerabilities.contains(where: { $0.severity >= 9 }) }) { return .red }
-        if viewModel.devices.contains(where: { $0.vulnerabilities.contains(where: { $0.severity >= 7 }) }) { return .orange }
+        if viewModel.sourceDevices.isEmpty { return .gray }
+        if viewModel.sourceDevices.contains(where: { $0.vulnerabilities.contains(where: { $0.severity >= 9 }) }) { return .red }
+        if viewModel.sourceDevices.contains(where: { $0.vulnerabilities.contains(where: { $0.severity >= 7 }) }) { return .orange }
         return .green
     }
 
     private func riskBadge(score: Double) -> some View {
-        Text(String(format: "%.1f", score))
-            .font(.caption).bold()
+        riskBadgeText(score)
+            .font(.caption2).bold()
             .foregroundStyle(.white)
             .padding(.horizontal, 6)
             .padding(.vertical, 2)
             .background(riskColor(score))
             .clipShape(.capsule)
+            .accessibilityLabel("Risk score \(String(format: "%.1f", score))")
     }
 
     // MARK: - Topology Sheet
@@ -792,16 +1172,11 @@ public struct ContentView: View {
             }
             .padding()
 
-            let sourceDevices = viewModel.selectedHistoryScanID != nil ? viewModel.historyDevices : viewModel.devices
+            let sourceDevices = viewModel.sourceDevices
 
             if sourceDevices.count < 2 {
-                VStack(spacing: 12) {
-                    Image(systemName: "point.3.connected.trianglepath.dotted")
-                        .font(.system(size: 40)).foregroundStyle(.tertiary)
-                    Text("Need at least 2 devices to render topology")
-                        .foregroundStyle(.secondary)
-                }
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                EmptyStateView(icon: "point.3.connected.trianglepath.dotted", title: "Not enough devices", message: "Need at least 2 devices to render topology")
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
                 TopologyView(devices: sourceDevices) { deviceID in
                     if let device = sourceDevices.first(where: { $0.id == deviceID }) {
@@ -812,42 +1187,194 @@ public struct ContentView: View {
                 .padding()
             }
         }
-        .frame(minWidth: 400, idealWidth: 500, minHeight: 400, idealHeight: 520)
+        .frame(minWidth: 450, idealWidth: 550, minHeight: 450, idealHeight: 550)
         .onExitCommand { showTopology = false }
     }
-}
 
-// MARK: - Keyboard Shortcuts
-private struct KeyboardShortcutHandling: ViewModifier {
-    let viewModel: ScannerViewModel
-    @FocusState private var isSearchFocused: Bool
-    @State private var exportMenuPresented = false
-
-    func body(content: Content) -> some View {
-        content
-            .background {
-                Button("") { viewModel.startScan() }
-                    .keyboardShortcut("r", modifiers: .command).hidden()
-                    .disabled(viewModel.isScanning)
-
-                Button("") { viewModel.stopScan() }
-                    .keyboardShortcut(".", modifiers: .command).hidden()
-                    .disabled(!viewModel.isScanning)
-
-                Button("") { viewModel.showConfig = true }
-                    .keyboardShortcut(",", modifiers: .command).hidden()
-
-                Button("") { isSearchFocused = true }
-                    .keyboardShortcut("f", modifiers: .command).hidden()
-
-                Button("") { exportMenuPresented = true }
-                    .keyboardShortcut("e", modifiers: [.command, .shift]).hidden()
+    // MARK: - Audit Log Sheet (Tier 3.20)
+    private var auditLogSheet: some View {
+        VStack(spacing: 0) {
+            HStack {
+                Text("Audit Log").font(.headline)
+                Spacer()
+                Button("Export JSON") {
+                    let json = viewModel.exportAuditLog()
+                    saveExport(json, type: .json, name: "audit-log.json")
+                }
+                .controlSize(.small)
+                Button("Close") { viewModel.showAuditLog = false }
+                    .buttonStyle(.borderedProminent)
+                    .controlSize(.small)
             }
+            .padding()
+
+            if viewModel.auditEvents.isEmpty {
+                EmptyStateView(icon: "list.bullet.clipboard", title: "No events", message: "Audit events will appear here as actions are performed")
+            } else {
+                List(viewModel.auditEvents) { event in
+                    HStack {
+                        Circle().fill(eventColor(event.category)).frame(width: 6, height: 6)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(event.action.rawValue).font(.caption).bold()
+                            Text(event.detail).font(.caption2).foregroundStyle(.secondary)
+                        }
+                        Spacer()
+                        Text(event.timestamp.formatted(date: .numeric, time: .shortened))
+                            .font(.caption2).foregroundStyle(.tertiary)
+                    }
+                    .padding(.vertical, 2)
+                }
+                .listStyle(.plain)
+            }
+        }
+        .frame(minWidth: 450, idealWidth: 500, minHeight: 350, idealHeight: 400)
+    }
+
+    private func eventColor(_ category: AuditCategory) -> Color {
+        switch category {
+        case .scanning: return .blue
+        case .configuration: return .orange
+        case .security: return .red
+        case .dataManagement: return .purple
+        case .export: return .green
+        case .system: return .gray
+        }
+    }
+
+    // MARK: - Profile Sheet (Tier 3.21)
+    private var profileSheet: some View {
+        VStack(spacing: 0) {
+            HStack {
+                Text("Configuration Profiles").font(.headline)
+                Spacer()
+                Button("Save Current") {
+                    let name = "Profile \(ProfileManager.shared.all().count + 1)"
+                    viewModel.saveProfile(name: name)
+                    viewModel.showToast(message: "Profile saved")
+                }
+                .controlSize(.small)
+                Button("Close") { viewModel.showProfiles = false }
+                    .buttonStyle(.borderedProminent)
+                    .controlSize(.small)
+            }
+            .padding()
+
+            let profiles = ProfileManager.shared.all()
+            if profiles.isEmpty {
+                EmptyStateView(icon: "square.3.layers.3d", title: "No profiles", message: "Save current configuration as a reusable profile")
+            } else {
+                List(profiles) { profile in
+                    HStack {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(profile.name).font(.body)
+                            Text("Ports: \(profile.config.portRange.lowerBound)-\(profile.config.portRange.upperBound), Timeout: \(String(format: "%.1f", profile.config.timeout))s")
+                                .font(.caption).foregroundStyle(.secondary)
+                        }
+                        Spacer()
+                        Button("Apply") {
+                            viewModel.applyProfile(profile.name)
+                            viewModel.showProfiles = false
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .controlSize(.small)
+                        Button("Delete", role: .destructive) {
+                            ProfileManager.shared.delete(name: profile.name)
+                        }
+                        .buttonStyle(.bordered)
+                        .controlSize(.small)
+                    }
+                    .padding(.vertical, 4)
+                }
+                .listStyle(.plain)
+            }
+        }
+        .frame(minWidth: 400, idealWidth: 450, minHeight: 300, idealHeight: 360)
     }
 }
 
-private extension View {
-    func keyboardShortcutHandling(viewModel: ScannerViewModel) -> some View {
-        modifier(KeyboardShortcutHandling(viewModel: viewModel))
+// MARK: - Supporting Views
+struct FilterChip: View {
+    let label: String
+    let isSelected: Bool
+    let color: Color
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 3) {
+                if isSelected {
+                    Image(systemName: "checkmark.circle.fill").font(.system(size: 8))
+                }
+                Text(label).font(.caption2).bold()
+            }
+            .padding(.horizontal, 8)
+            .padding(.vertical, 4)
+            .background(isSelected ? color : Color(nsColor: .controlBackgroundColor))
+            .foregroundStyle(isSelected ? .white : .primary)
+            .clipShape(.capsule)
+            .overlay(Capsule().stroke(isSelected ? color : Color.gray.opacity(0.3), lineWidth: 1))
+        }
+        .buttonStyle(.plain)
     }
 }
+
+struct DeviceDetailRow: View {
+    let device: Device
+    let tags: [Tag]
+
+    var body: some View {
+        HStack(spacing: 8) {
+            riskSymbol(device.riskScore)
+                .foregroundStyle(riskColor(device.riskScore))
+                .frame(width: 16)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(device.host ?? device.ip).font(.body).lineLimit(1)
+                HStack(spacing: 4) {
+                    Text(device.ip).font(.caption).foregroundStyle(.secondary)
+                    if let os = device.os {
+                        Text(os).font(.caption2).foregroundStyle(.tertiary)
+                    }
+                }
+            }
+            Spacer()
+            HStack(spacing: 4) {
+                Text("\(device.ports.filter { $0.state == .open }.count)").font(.caption2).foregroundStyle(.secondary)
+                Text("\(device.vulnerabilities.count)").font(.caption2).foregroundStyle(.secondary)
+            }
+            riskBadgeText(device.riskScore)
+                .font(.system(size: 8)).bold()
+                .foregroundStyle(.white)
+                .padding(.horizontal, 4).padding(.vertical, 2)
+                .background(riskColor(device.riskScore))
+                .clipShape(RoundedRectangle(cornerRadius: 3))
+        }
+        .padding(8)
+        .background(.surfaceSecondary)
+        .clipShape(RoundedRectangle(cornerRadius: 6))
+    }
+}
+
+struct VulnRowMini: View {
+    let vuln: Vuln
+
+    var body: some View {
+        HStack(spacing: 6) {
+            riskBadgeText(vuln.severity)
+                .font(.system(size: 7)).bold()
+                .foregroundStyle(.white)
+                .padding(.horizontal, 3).padding(.vertical, 1)
+                .background(riskColor(vuln.severity))
+                .clipShape(RoundedRectangle(cornerRadius: 2))
+            Text(vuln.id).font(.caption).foregroundStyle(.secondary)
+            Text(vuln.description).font(.caption).lineLimit(1)
+            Spacer()
+            if let cve = vuln.cve {
+                Text(cve).font(.caption2).foregroundStyle(.blue)
+            }
+        }
+        .padding(.vertical, 4)
+    }
+}
+
+// MARK: - Keyboard Shortcuts (Tier 2.15)
+

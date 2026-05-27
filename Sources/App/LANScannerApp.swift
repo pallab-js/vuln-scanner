@@ -24,6 +24,11 @@ struct LANScannerApp: App {
         WindowGroup {
             ContentView()
                 .frame(minWidth: 800, minHeight: 600)
+                .onAppear {
+                    DispatchQueue.main.async {
+                        NSApplication.shared.windows.first?.zoom(nil)
+                    }
+                }
         }
         .windowResizability(.contentMinSize)
         .commands {

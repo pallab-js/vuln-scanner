@@ -99,24 +99,27 @@ public struct TopologyView: View {
     let devices: [Device]
     let onSelect: (String) -> Void
 
+    @State private var scene: TopologyScene = {
+        let s = TopologyScene()
+        s.topology = nil
+        return s
+    }()
+
     public init(devices: [Device], onSelect: @escaping (String) -> Void) {
         self.devices = devices
         self.onSelect = onSelect
     }
 
     public var body: some View {
-        let topo = TopologyLayout(devices: devices)
-        SpriteView(scene: makeScene(topo: topo), debugOptions: [])
+        SpriteView(scene: scene, debugOptions: [])
             .aspectRatio(1, contentMode: .fit)
             .frame(minWidth: 360, minHeight: 360)
-    }
-
-    private func makeScene(topo: TopologyLayout) -> TopologyScene {
-        let scene = TopologyScene()
-        scene.topology = topo
-        scene.onSelectDevice = { id in
-            onSelect(id)
-        }
-        return scene
+            .onAppear {
+                scene.topology = TopologyLayout(devices: devices)
+                scene.onSelectDevice = { id in onSelect(id) }
+            }
+            .onChange(of: devices.count) { _, _ in
+                scene.topology = TopologyLayout(devices: devices)
+            }
     }
 }

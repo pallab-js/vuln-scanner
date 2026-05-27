@@ -141,8 +141,7 @@ struct ConfigSheet: View {
 
             Section("UDP Scan") {
                 Toggle("Enable UDP scan", isOn: $scanUDP)
-                    .disabled(true)
-                Text("UDP scanning slows scans significantly. Experimental.")
+                Text("Scans common UDP ports. Significantly increases scan time.")
                     .font(.caption).foregroundStyle(.secondary)
 
                 if scanUDP {

@@ -17,6 +17,20 @@ func riskLabel(_ score: Double) -> String {
     switch score { case 9...: "CRITICAL" case 7...: "HIGH" case 4...: "MEDIUM" case 1...: "LOW" default: "INFO" }
 }
 
+func riskBadgeText(_ score: Double) -> Text {
+    Text(verbatim: "\(String(format: "%.1f", score))")
+}
+
+func riskSymbol(_ score: Double) -> Text {
+    switch score {
+    case 9...: return Text(verbatim: "⚠️")
+    case 7...: return Text(verbatim: "▲")
+    case 4...: return Text(verbatim: "◆")
+    case 1...: return Text(verbatim: "●")
+    default: return Text(verbatim: "○")
+    }
+}
+
 func frameworkColor(_ fw: ComplianceFramework) -> Color {
     switch fw {
     case .pciDSS: return .red
