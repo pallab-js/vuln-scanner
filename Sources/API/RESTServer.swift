@@ -25,37 +25,48 @@ public final class RESTServer: @unchecked Sendable {
 
     private init() {}
 
-    public func start(host: String = "127.0.0.1") throws {
-        lock.lock(); defer { lock.unlock() }
-        if isRunning {
-            channel?.close(mode: .all, promise: nil)
-            isRunning = false
-        }
-        let group = Self.sharedGroup
-        self.group = group
-        let bootstrap = ServerBootstrap(group: group)
-            .serverChannelOption(ChannelOptions.backlog, value: 256)
-            .serverChannelOption(ChannelOptions.socket(.init(SOL_SOCKET), .init(SO_REUSEADDR)), value: 1)
-            .childChannelInitializer { channel in
-                channel.pipeline.configureHTTPServerPipeline().flatMap {
-                    channel.pipeline.addHandler(HTTPHandler(server: self))
-                }
+    public func start(host: String = "127.0.0.1") async throws {
+        let (shouldBind, groupToUse) = lock.withLock { () -> (Bool, EventLoopGroup) in
+            if isRunning {
+                channel?.close(mode: .all, promise: nil)
+                channel = nil
+                isRunning = false
             }
-            .childChannelOption(ChannelOptions.socket(.init(SOL_SOCKET), .init(SO_REUSEADDR)), value: 1)
-            .childChannelOption(ChannelOptions.maxMessagesPerRead, value: 1)
+            let group = Self.sharedGroup
+            self.group = group
+            return (true, group)
+        }
+        
+        guard shouldBind else { return }
+        
+        let bootstrap = ServerBootstrap(group: groupToUse)
+             .serverChannelOption(ChannelOptions.backlog, value: 256)
+             .serverChannelOption(ChannelOptions.socket(.init(SOL_SOCKET), .init(SO_REUSEADDR)), value: 1)
+             .childChannelInitializer { channel in
+                 channel.pipeline.configureHTTPServerPipeline().flatMap {
+                     channel.pipeline.addHandler(HTTPHandler(server: self))
+                 }
+             }
+             .childChannelOption(ChannelOptions.socket(.init(SOL_SOCKET), .init(SO_REUSEADDR)), value: 1)
+             .childChannelOption(ChannelOptions.maxMessagesPerRead, value: 1)
 
-        channel = try bootstrap.bind(host: host, port: port).wait()
-        isRunning = true
+        let boundChannel = try await bootstrap.bind(host: host, port: port).get()
+        
+        lock.withLock {
+            channel = boundChannel
+            isRunning = true
+        }
         logger.notice("REST API started on \(host):\(port)")
     }
 
     public func stop() {
-        lock.lock(); defer { lock.unlock() }
-        guard isRunning else { return }
-        channel?.close(mode: .all, promise: nil)
-        channel = nil
-        isRunning = false
-        logger.notice("REST API stopped")
+        lock.withLock {
+            guard isRunning else { return }
+            channel?.close(mode: .all, promise: nil)
+            channel = nil
+            isRunning = false
+            logger.notice("REST API stopped")
+        }
     }
 
     deinit {
@@ -219,9 +230,9 @@ public final class RESTServer: @unchecked Sendable {
             for var device in discovered {
                 let ports = try await scanner.scan(ip: device.ip, ports: Array(1...1024), timeout: 2)
                 let os = osFP.infer(ports: ports)
-                device = Device(ip: device.ip, mac: device.mac, host: device.host, os: os ?? device.os, ports: ports)
+                device = Device(ip: device.ip, mac: device.mac, host: device.host, os: os ?? device.os, ports: ports, firstSeen: device.firstSeen, lastSeen: device.lastSeen)
                 let vulns = mapper.map(device: device, customRules: customRules)
-                device = Device(ip: device.ip, mac: device.mac, host: device.host, os: device.os, ports: ports, vulnerabilities: vulns)
+                device = Device(ip: device.ip, mac: device.mac, host: device.host, os: device.os, ports: ports, vulnerabilities: vulns, firstSeen: device.firstSeen, lastSeen: device.lastSeen)
                 scanned.append(device)
             }
             let result = ScanResult(devices: scanned, scanDuration: 0, totalPortsScanned: 1024)

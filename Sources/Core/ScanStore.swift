@@ -59,9 +59,13 @@ public final class ScanStore: @unchecked Sendable {
     public func save(scanResult: ScanResult, config: ScanConfig, duration: TimeInterval) throws -> String {
         let scanID = UUID().uuidString
         let devicesData = try encoder.encode(scanResult.devices)
-        let devicesJSON = String(data: devicesData, encoding: .utf8)!
+        guard let devicesJSON = String(data: devicesData, encoding: .utf8) else {
+            throw ScanStoreError.invalidData("Failed to encode devices JSON string")
+        }
         let configData = try encoder.encode(config)
-        let configJSON = String(data: configData, encoding: .utf8)!
+        guard let configJSON = String(data: configData, encoding: .utf8) else {
+            throw ScanStoreError.invalidData("Failed to encode config JSON string")
+        }
 
         let summary = ScanSummary(
             scanID: scanID,
@@ -196,4 +200,5 @@ public final class ScanStore: @unchecked Sendable {
 
 enum ScanStoreError: Error {
     case scanNotFound
+    case invalidData(String)
 }

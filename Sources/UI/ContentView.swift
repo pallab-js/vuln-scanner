@@ -12,6 +12,18 @@ public struct ContentView: View {
     @State private var showComplianceBar = false
     @State private var vulnDisplayLimit = 100
 
+    private var isSheetPresented: Bool {
+        viewModel.showConfig ||
+        viewModel.showRuleEditor ||
+        viewModel.showRulesManager ||
+        viewModel.showTagEditor ||
+        viewModel.showCompareView ||
+        viewModel.showExportPreview ||
+        viewModel.showAuditLog ||
+        viewModel.showProfiles ||
+        showTopology
+    }
+
     public init() {}
 
     public var body: some View {
@@ -121,14 +133,16 @@ public struct ContentView: View {
         .background {
             Button("") { viewModel.startScan() }
                 .keyboardShortcut("r", modifiers: .command).hidden()
-                .disabled(viewModel.isScanning || !AuthManager.shared.requireRole(.operator_))
+                .disabled(viewModel.isScanning || !AuthManager.shared.requireRole(.operator_) || isSheetPresented)
             Button("") { viewModel.stopScan() }
                 .keyboardShortcut(".", modifiers: .command).hidden()
-                .disabled(!viewModel.isScanning)
+                .disabled(!viewModel.isScanning || isSheetPresented)
             Button("") { viewModel.showConfig = true }
                 .keyboardShortcut(",", modifiers: .command).hidden()
+                .disabled(isSheetPresented)
             Button("") { isSearchFocused = true }
                 .keyboardShortcut("f", modifiers: .command).hidden()
+                .disabled(isSheetPresented)
         }
     }
 

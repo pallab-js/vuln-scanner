@@ -33,7 +33,7 @@ public struct TopologyLayout: Sendable {
         let edges: [TopologyEdge] = {
             guard nodes.count > 1 else { return [] }
             var e: [TopologyEdge] = []
-            let limit = min(nodes.count, 12)
+            let limit = min(nodes.count, 50)
             for i in 0..<limit {
                 for j in (i + 1)..<limit {
                     e.append(TopologyEdge(from: nodes[i].id, to: nodes[j].id))

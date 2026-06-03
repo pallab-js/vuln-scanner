@@ -112,7 +112,9 @@ public final class ScannerViewModel {
         if config.apiEnabled {
             RESTServer.shared.port = config.apiPort
             RESTServer.shared.apiKey = config.apiKey
-            try? RESTServer.shared.start()
+            Task {
+                try? await RESTServer.shared.start()
+            }
         }
     }
 
@@ -130,14 +132,16 @@ public final class ScannerViewModel {
         if enabled {
             RESTServer.shared.port = port
             RESTServer.shared.apiKey = apiKey
-            do {
-                try RESTServer.shared.start()
-                statusMessage = "REST API running on port \(port)"
-                AuditLogger.shared.log(action: .apiStarted, detail: "API started on port \(port)", category: .configuration)
-            } catch {
-                errorMessage = "Failed to start API: \(error.localizedDescription)"
-                statusMessage = "API failed to start"
-                Logger.ui.error("API start failed: \(error.localizedDescription)")
+            Task {
+                do {
+                    try await RESTServer.shared.start()
+                    statusMessage = "REST API running on port \(port)"
+                    AuditLogger.shared.log(action: .apiStarted, detail: "API started on port \(port)", category: .configuration)
+                } catch {
+                    errorMessage = "Failed to start API: \(error.localizedDescription)"
+                    statusMessage = "API failed to start"
+                    Logger.ui.error("API start failed: \(error.localizedDescription)")
+                }
             }
         } else {
             RESTServer.shared.stop()

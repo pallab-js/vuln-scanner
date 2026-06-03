@@ -11,7 +11,7 @@ import Core
     server.port = 8183
 
     #expect(server.isRunning == false)
-    try server.start(host: "127.0.0.1")
+    try await server.start(host: "127.0.0.1")
     #expect(server.isRunning)
     defer { server.stop(); server.apiKey = "" }
 

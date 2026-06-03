@@ -81,7 +81,9 @@ public final class ScanOrchestrator {
                         mac: device.mac,
                         host: device.host,
                         os: resolvedOS,
-                        ports: allPorts
+                        ports: allPorts,
+                        firstSeen: device.firstSeen,
+                        lastSeen: device.lastSeen
                     )
 
                     let vulns = self.vulnMapper.map(device: device, customRules: customRules)
@@ -91,7 +93,9 @@ public final class ScanOrchestrator {
                         host: device.host,
                         os: resolvedOS,
                         ports: allPorts,
-                        vulnerabilities: vulns
+                        vulnerabilities: vulns,
+                        firstSeen: device.firstSeen,
+                        lastSeen: device.lastSeen
                     )
 
                     scannedDevices.append(device)
